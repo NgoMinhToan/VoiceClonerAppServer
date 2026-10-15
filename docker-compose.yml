@@ -36,7 +36,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/${DOCKER_USER:-ngominhtoan}/voicecloner_appserver:${TAG:-latest}
     container_name: voicecloner-appserver
     restart: always
     depends_on:
