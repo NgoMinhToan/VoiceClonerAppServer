@@ -1,7 +1,9 @@
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import delete, desc, select
 
 from VoiceClonerAppServer.config.settings_manager import (
     AppSettings,
@@ -9,7 +11,9 @@ from VoiceClonerAppServer.config.settings_manager import (
     ModelWorkerConfig,
     settings_manager,
 )
+from VoiceClonerAppServer.core.database import AsyncSessionLocal
 from VoiceClonerAppServer.core.security import verify_management_key
+from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 from VoiceClonerAppServer.services.usage_tracker import usage_tracker
 
@@ -38,6 +42,11 @@ class UpdateSettingsRequest(BaseModel):
 class TestWorkerRequest(BaseModel):
     url: str
     api_key: Optional[str] = ""
+
+
+class UpdateUserRequest(BaseModel):
+    max_cloned_slots: Optional[int] = Field(None, ge=1, le=100)
+    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
 
 
 @router.get("/settings")
@@ -123,3 +132,73 @@ async def get_metrics_summary(hours: int = Query(24, ge=1, le=168)):
     summary["active_keys_count"] = len([k for k in settings.client_api_keys if k.is_active])
     summary["active_workers_count"] = len([w for w in settings.model_workers if w.is_active])
     return summary
+
+
+# ── USER MANAGEMENT ENDPOINTS ──
+
+@router.get("/users")
+async def list_users():
+    """List registered users with clone slots and today's TTS character usage."""
+    today = datetime.now(timezone.utc).date()
+    async with AsyncSessionLocal() as session:
+        query = select(User).order_by(desc(User.created_at)).limit(100)
+        res = await session.execute(query)
+        users = res.scalars().all()
+
+        results = []
+        for u in users:
+            # Query usage today
+            usage_query = select(DailyUsage.tts_characters_used).where(
+                DailyUsage.user_id == u.id,
+                DailyUsage.usage_date == today,
+            )
+            usage_res = await session.execute(usage_query)
+            chars_today = usage_res.scalar_one_or_none() or 0
+
+            results.append({
+                "id": u.id,
+                "email": u.email,
+                "full_name": u.full_name,
+                "auth_provider": u.auth_provider,
+                "avatar_url": u.avatar_url,
+                "max_cloned_slots": u.max_cloned_slots,
+                "tts_chars_today": chars_today,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+            })
+        return results
+
+
+@router.patch("/users/{user_id}")
+async def update_user(user_id: str, payload: UpdateUserRequest):
+    """Update user quota or profile details."""
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if payload.max_cloned_slots is not None:
+            user.max_cloned_slots = payload.max_cloned_slots
+        if payload.full_name is not None:
+            user.full_name = payload.full_name
+
+        await session.commit()
+        await session.refresh(user)
+        return {
+            "status": "success",
+            "id": user.id,
+            "full_name": user.full_name,
+            "max_cloned_slots": user.max_cloned_slots,
+        }
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: str):
+    """Delete a user account and associated voices."""
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        await session.delete(user)
+        await session.commit()
+        return {"status": "success", "message": f"User {user_id} deleted"}

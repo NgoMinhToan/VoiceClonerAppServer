@@ -63,6 +63,7 @@ function switchTab(tabId) {
   if (navBtn) navBtn.classList.add('active');
 
   if (tabId === 'metrics') fetchMetrics();
+  else if (tabId === 'users') fetchUsers();
   else if (tabId === 'keys') fetchKeys();
   else if (tabId === 'workers') fetchWorkers();
   else if (tabId === 'settings') fetchSettings();
@@ -189,6 +190,97 @@ function renderRecentLogs(logs) {
   `).join('');
 }
 
+// ── USERS MANAGEMENT ──
+
+async function fetchUsers() {
+  try {
+    const res = await apiRequest('/v1/management/users');
+    if (!res.ok) return;
+    const users = await res.json();
+    const tbody = document.getElementById('usersTableBody');
+    if (!tbody) return;
+
+    if (!users.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-slate-500 text-sm">Chưa có người dùng nào đăng ký trong database.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = users.map(u => `
+      <tr class="table-row-hover border-b border-slate-800 text-sm">
+        <td class="py-3 px-4">
+          <div class="flex items-center space-x-2.5">
+            <div class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold text-xs">
+              ${(u.full_name || u.email || 'U')[0].toUpperCase()}
+            </div>
+            <div>
+              <div class="font-bold text-slate-200 text-xs">${u.full_name || 'Chưa đặt tên'}</div>
+              <div class="text-[11px] text-slate-400 mono">${u.email}</div>
+            </div>
+          </div>
+        </td>
+        <td class="py-3 px-4">
+          <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${u.auth_provider === 'google' ? 'bg-rose-500/10 text-rose-300 border border-rose-500/30' : 'bg-slate-700 text-slate-300'}">
+            ${u.auth_provider === 'google' ? '<i class="fa-brands fa-google mr-1"></i> Google' : '<i class="fa-solid fa-envelope mr-1"></i> Email'}
+          </span>
+        </td>
+        <td class="py-3 px-4 font-semibold text-slate-100">${u.max_cloned_slots} slots</td>
+        <td class="py-3 px-4 font-semibold text-emerald-400">${(u.tts_chars_today || 0).toLocaleString()} ký tự</td>
+        <td class="py-3 px-4 text-xs text-slate-500">${u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}</td>
+        <td class="py-3 px-4 text-right space-x-2">
+          <button onclick="openEditUserModal('${u.id}', '${u.full_name || u.email}', ${u.max_cloned_slots})" class="px-2.5 py-1 text-xs rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition">
+            <i class="fa-solid fa-pen mr-1"></i> Sửa Slot
+          </button>
+          <button onclick="deleteUser('${u.id}')" class="px-2.5 py-1 text-xs rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition">
+            <i class="fa-solid fa-trash-can mr-1"></i> Xóa
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    console.error('fetchUsers error', e);
+  }
+}
+
+function openEditUserModal(userId, fullName, slots) {
+  document.getElementById('editUserId').value = userId;
+  document.getElementById('editUserDisplayName').textContent = fullName;
+  document.getElementById('editUserSlots').value = slots;
+  document.getElementById('modalEditUser').classList.remove('hidden');
+}
+
+async function saveUserEdit() {
+  const userId = document.getElementById('editUserId').value;
+  const slots = parseInt(document.getElementById('editUserSlots').value) || 3;
+  try {
+    const res = await apiRequest(`/v1/management/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ max_cloned_slots: slots })
+    });
+    if (res.ok) {
+      showToast('Đã cập nhật slot người dùng thành công!', 'success');
+      document.getElementById('modalEditUser').classList.add('hidden');
+      fetchUsers();
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function deleteUser(userId) {
+  if (!confirm('Bạn có chắc chắn muốn xóa tài khoản người dùng này không?')) return;
+  try {
+    const res = await apiRequest(`/v1/management/users/${userId}`, { method: 'DELETE' });
+    if (res.ok) {
+      showToast('Đã xóa người dùng thành công!', 'success');
+      fetchUsers();
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ── CLIENT KEYS ──
+
 async function fetchKeys() {
   try {
     const res = await apiRequest('/v1/management/keys');
@@ -272,6 +364,8 @@ async function toggleKey(keyId, newState) {
   }
 }
 
+// ── WORKERS ──
+
 async function fetchWorkers() {
   try {
     const res = await apiRequest('/v1/management/workers');
@@ -330,6 +424,8 @@ async function testWorker(url) {
   }
 }
 
+// ── SETTINGS ──
+
 async function fetchSettings() {
   try {
     const res = await apiRequest('/v1/management/settings');
@@ -384,7 +480,6 @@ async function saveSettings(e) {
     });
     if (res.ok) {
       showToast('Cấu hình đã được lưu và Hot-Reload thành công!', 'success');
-      // If management key changed, update localStorage
       if (payload.security.management_key) {
         setManagementKey(payload.security.management_key);
       }

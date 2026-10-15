@@ -34,17 +34,21 @@
           <i class="fa-solid fa-chart-line text-slate-400 w-5"></i>
           <span>1. Thống Kê & Metrics</span>
         </button>
+        <button id="nav-btn-users" onclick="switchTab('users')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
+          <i class="fa-solid fa-users text-slate-400 w-5"></i>
+          <span>2. Quản Lý Người Dùng</span>
+        </button>
         <button id="nav-btn-keys" onclick="switchTab('keys')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
           <i class="fa-solid fa-key text-slate-400 w-5"></i>
-          <span>2. Client API Keys</span>
+          <span>3. Client API Keys</span>
         </button>
         <button id="nav-btn-workers" onclick="switchTab('workers')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
           <i class="fa-solid fa-network-wired text-slate-400 w-5"></i>
-          <span>3. Voice Model Workers</span>
+          <span>4. Voice Model Workers</span>
         </button>
         <button id="nav-btn-settings" onclick="switchTab('settings')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
           <i class="fa-solid fa-sliders text-slate-400 w-5"></i>
-          <span>4. Cấu Hình (settings.json)</span>
+          <span>5. Cấu Hình (settings.json)</span>
         </button>
       </nav>
     </div>
@@ -73,6 +77,10 @@
         <span class="px-2 py-0.5 text-xs font-semibold rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Port 8000</span>
       </div>
       <div class="flex items-center space-x-3">
+        <a href="/demo" target="_blank" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 transition flex items-center space-x-1.5">
+          <i class="fa-solid fa-play"></i>
+          <span>Mở Web Demo</span>
+        </a>
         <button onclick="openAuthModal()" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1.5">
           <i class="fa-solid fa-key text-indigo-400"></i>
           <span>Management Key</span>
@@ -178,7 +186,39 @@
         </div>
       </section>
 
-      <!-- TAB 2: CLIENT API KEYS -->
+      <!-- TAB 2: USERS MANAGEMENT -->
+      <section id="tab-content-users" class="tab-content hidden space-y-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-bold text-white">Quản Lý Người Dùng (User Accounts)</h2>
+            <p class="text-xs text-slate-400">Danh sách tài khoản đăng ký trong cơ sở dữ liệu, quản lý số slot clone giọng và hạn mức.</p>
+          </div>
+          <button onclick="fetchUsers()" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1.5">
+            <i class="fa-solid fa-rotate"></i>
+            <span>Làm Mới</span>
+          </button>
+        </div>
+
+        <div class="glass-card rounded-xl overflow-hidden">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900/60 text-slate-400 text-xs uppercase tracking-wider">
+                <th class="py-3 px-4">Người Dùng</th>
+                <th class="py-3 px-4">Phương Thức Đăng Nhập</th>
+                <th class="py-3 px-4">Số Slot Clone Tối Đa</th>
+                <th class="py-3 px-4">Ký Tự TTS Hôm Nay</th>
+                <th class="py-3 px-4">Ngày Đăng Ký</th>
+                <th class="py-3 px-4 text-right">Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody">
+              <tr><td colspan="6" class="text-center py-8 text-slate-500 text-sm">Đang tải danh sách người dùng...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TAB 3: CLIENT API KEYS -->
       <section id="tab-content-keys" class="tab-content hidden space-y-6">
         <div class="flex items-center justify-between">
           <div>
@@ -210,7 +250,7 @@
         </div>
       </section>
 
-      <!-- TAB 3: VOICE MODEL WORKERS -->
+      <!-- TAB 4: VOICE MODEL WORKERS -->
       <section id="tab-content-workers" class="tab-content hidden space-y-6">
         <div>
           <h2 class="text-base font-bold text-white">Upstream Voice Model Inference Nodes</h2>
@@ -236,7 +276,7 @@
         </div>
       </section>
 
-      <!-- TAB 4: SYSTEM SETTINGS (SETTINGS.JSON EDITOR) -->
+      <!-- TAB 5: SYSTEM SETTINGS (SETTINGS.JSON EDITOR) -->
       <section id="tab-content-settings" class="tab-content hidden space-y-6">
         <div>
           <h2 class="text-base font-bold text-white">Cấu Hình Hệ Thống (config/settings.json)</h2>
@@ -319,6 +359,31 @@
       </section>
 
     </main>
+  </div>
+
+  <!-- MODAL: EDIT USER CLONE SLOTS -->
+  <div id="modalEditUser" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="glass-card max-w-md w-full p-6 rounded-2xl border border-slate-700 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="font-bold text-sm text-white">Chỉnh Sửa Slot Clone Giọng</h3>
+        <button onclick="document.getElementById('modalEditUser').classList.add('hidden')" class="text-slate-400 hover:text-white">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <input id="editUserId" type="hidden">
+      <div>
+        <label class="block text-xs font-medium text-slate-300 mb-1">Người Dùng</label>
+        <div id="editUserDisplayName" class="text-xs font-bold text-white bg-slate-900 p-2.5 rounded-lg border border-slate-800"></div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-300 mb-1">Số Slot Clone Tối Đa (Max Cloned Slots)</label>
+        <input id="editUserSlots" type="number" min="1" max="100" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500">
+      </div>
+      <div class="pt-2 flex justify-end space-x-2">
+        <button onclick="document.getElementById('modalEditUser').classList.add('hidden')" class="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white">Hủy</button>
+        <button onclick="saveUserEdit()" class="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white">Lưu Thay Đổi</button>
+      </div>
+    </div>
   </div>
 
   <!-- MODAL: CREATE NEW CLIENT KEY -->

@@ -14,10 +14,11 @@ _SERVER_DIR = Path(__file__).resolve().parent
 if str(_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVER_DIR))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from VoiceClonerAppServer.api.management import router as management_router
 from VoiceClonerAppServer.api.speech import router as speech_router
@@ -58,6 +59,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware enabling Chrome/Edge Private Network Access (PNA).
+    Permits public HTTPS websites (e.g. https://ngominhtoan.github.io)
+    to query local/private network addresses (http://localhost:8000).
+    """
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            origin = request.headers.get("origin", "*")
+            headers = {
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+                "Access-Control-Allow-Headers": request.headers.get("access-control-request-headers", "*"),
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Private-Network": "true",
+            }
+            return Response(status_code=200, headers=headers)
+
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+
+
+# Add CORSMiddleware first
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -66,6 +92,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add PrivateNetworkAccessMiddleware after CORSMiddleware so it wraps outer
+app.add_middleware(PrivateNetworkAccessMiddleware)
+
 # Static files directory
 STATIC_DIR = _SERVER_DIR / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -73,6 +102,11 @@ DASHBOARD_DIR = STATIC_DIR / "dashboard"
 DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Mount VoiceClonerWebDemo if present for seamless local execution
+WEB_DEMO_DIR = _PROJECT_ROOT / "VoiceClonerWebDemo"
+if WEB_DEMO_DIR.exists():
+    app.mount("/demo", StaticFiles(directory=str(WEB_DEMO_DIR), html=True), name="webdemo")
 
 # Include Routers
 app.include_router(management_router)
