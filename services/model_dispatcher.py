@@ -130,6 +130,8 @@ class ModelDispatcher:
         smart_pause: bool = True,
         response_format: str = "wav",
         ref_audio_path: Optional[str] = None,
+        ref_npz_path: Optional[str] = None,
+        ref_npz_base64: Optional[str] = None,
     ) -> Tuple[bytes, float, str]:
         """
         Dispatch TTS synthesis to chosen worker.
@@ -152,6 +154,16 @@ class ModelDispatcher:
         worker, worker_url = selection
         client = self._get_http_client()
         headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
+
+        # If ref_npz_path provided on server, encode to base64 for network transfer
+        npz_b64 = ref_npz_base64
+        if not npz_b64 and ref_npz_path and Path(ref_npz_path).exists():
+            try:
+                import base64
+                npz_b64 = base64.b64encode(Path(ref_npz_path).read_bytes()).decode("utf-8")
+            except Exception as e:
+                logger.warning(f"Failed to read/encode ref_npz_path {ref_npz_path}: {e}")
+
         payload = {
             "text": text,
             "voice": voice,
@@ -162,6 +174,7 @@ class ModelDispatcher:
             "smart_pause": smart_pause,
             "format": response_format,
             "ref_audio_path": ref_audio_path,
+            "ref_npz_base64": npz_b64,
         }
 
         t0 = time.perf_counter()

@@ -90,13 +90,6 @@ class SettingsManager:
                 is_active=True,
                 daily_char_limit=50000,
             ),
-            ClientApiKeyConfig(
-                id="key_web_demo_default",
-                name="Web Demo Client",
-                key="vc_live_w1e2b3d4e5m6o7k8e9y0z1x2c3v4b5n6",
-                is_active=True,
-                daily_char_limit=20000,
-            ),
         ]
         default_workers = [
             ModelWorkerConfig(

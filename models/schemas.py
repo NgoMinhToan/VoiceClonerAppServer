@@ -40,6 +40,9 @@ class SynthesisRequest(BaseModel):
     smart_pause: bool = Field(True)
     format: Optional[Literal["wav", "pcm"]] = Field("wav")
     response_format: Optional[Literal["wav", "pcm"]] = Field(None)
+    ref_audio_path: Optional[str] = Field(None)
+    ref_npz_path: Optional[str] = Field(None)
+    ref_npz_base64: Optional[str] = Field(None)
 
 
 class PreviewSpeechRequest(BaseModel):

@@ -38,6 +38,9 @@ async def create_speech(
             denoise=request.denoise,
             smart_pause=request.smart_pause,
             response_format=response_format,
+            ref_audio_path=request.ref_audio_path,
+            ref_npz_path=request.ref_npz_path,
+            ref_npz_base64=request.ref_npz_base64,
         )
 
         duration_ms = (time.perf_counter() - t0) * 1000.0
