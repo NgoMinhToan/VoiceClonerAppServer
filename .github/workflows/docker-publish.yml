@@ -7,7 +7,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/voicecloner_appserver
 
 jobs:
   build-and-push:
@@ -32,11 +31,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Calculate Commit Count
+      - name: Calculate Version and Lowercase Image Name
         id: vars
         run: |
           COUNT=$(git rev-list --count HEAD)
           echo "version=v${COUNT}" >> $GITHUB_OUTPUT
+          LOWER_IMAGE=$(echo "${{ github.repository_owner }}/voicecloner_appserver" | tr '[:upper:]' '[:lower:]')
+          echo "image=${LOWER_IMAGE}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -44,5 +45,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.vars.outputs.image }}:latest
+            ${{ env.REGISTRY }}/${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.version }}
