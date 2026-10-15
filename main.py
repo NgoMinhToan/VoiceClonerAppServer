@@ -24,9 +24,9 @@ from VoiceClonerAppServer.api.management import router as management_router
 from VoiceClonerAppServer.api.speech import router as speech_router
 from VoiceClonerAppServer.api.system import router as system_router
 from VoiceClonerAppServer.api.voices import router as voices_router
-from VoiceClonerAppServer.config.settings_manager import settings_manager
 from VoiceClonerAppServer.core.database import init_db
 from VoiceClonerAppServer.core.redis_client import redis_client
+from VoiceClonerAppServer.core.settings_manager import settings_manager
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 
 logger = logging.getLogger("VoiceClonerAppServer")
@@ -102,11 +102,6 @@ DASHBOARD_DIR = STATIC_DIR / "dashboard"
 DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-# Mount VoiceClonerWebDemo if present for seamless local execution
-WEB_DEMO_DIR = _PROJECT_ROOT / "VoiceClonerWebDemo"
-if WEB_DEMO_DIR.exists():
-    app.mount("/demo", StaticFiles(directory=str(WEB_DEMO_DIR), html=True), name="webdemo")
 
 # Include Routers
 app.include_router(management_router)

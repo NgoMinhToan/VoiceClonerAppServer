@@ -2,7 +2,7 @@ import secrets
 from typing import Optional
 from fastapi import Header, HTTPException, Query, status
 
-from VoiceClonerAppServer.config.settings_manager import (
+from VoiceClonerAppServer.core.settings_manager import (
     ClientApiKeyConfig,
     settings_manager,
 )

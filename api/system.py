@@ -1,6 +1,6 @@
 import socket
 from fastapi import APIRouter
-from VoiceClonerAppServer.config.settings_manager import settings_manager
+from VoiceClonerAppServer.core.settings_manager import settings_manager
 
 router = APIRouter(tags=["System"])
 

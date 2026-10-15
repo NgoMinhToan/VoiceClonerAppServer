@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, desc, select
 
-from VoiceClonerAppServer.config.settings_manager import (
+from VoiceClonerAppServer.core.settings_manager import (
     AppSettings,
     ClientApiKeyConfig,
     ModelWorkerConfig,

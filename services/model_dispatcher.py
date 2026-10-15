@@ -8,7 +8,7 @@ import httpx
 import numpy as np
 import soundfile as sf
 
-from VoiceClonerAppServer.config.settings_manager import ModelWorkerConfig, settings_manager
+from VoiceClonerAppServer.core.settings_manager import ModelWorkerConfig, settings_manager
 
 logger = logging.getLogger("VoiceClonerAppServer.ModelDispatcher")
 

@@ -518,5 +518,9 @@ function saveAuthKey() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  const linkWebDemo = document.getElementById('linkWebDemo');
+  if (linkWebDemo) {
+    linkWebDemo.href = `${window.location.protocol}//${window.location.hostname}:3000`;
+  }
   switchTab('metrics');
 });

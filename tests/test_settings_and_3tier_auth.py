@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from VoiceClonerAppServer.main import app
-from VoiceClonerAppServer.config.settings_manager import settings_manager
+from VoiceClonerAppServer.core.settings_manager import settings_manager
 from VoiceClonerAppServer.core.database import init_db
 
 client = TestClient(app)

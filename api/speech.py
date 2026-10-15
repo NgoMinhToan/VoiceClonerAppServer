@@ -2,7 +2,7 @@ import time
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from VoiceClonerAppServer.config.settings_manager import ClientApiKeyConfig
+from VoiceClonerAppServer.core.settings_manager import ClientApiKeyConfig
 from VoiceClonerAppServer.core.security import verify_client_api_key
 from VoiceClonerAppServer.models.schemas import PreviewSpeechRequest, SynthesisRequest
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
