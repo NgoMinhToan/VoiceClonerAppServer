@@ -1,0 +1,86 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "security": {
+    "management_key": "vc_admin_secret_key_123",
+    "require_client_api_key": true
+  },
+  "client_api_keys": [
+    {
+      "id": "key_android_app_default",
+      "name": "Android Mobile App (Production)",
+      "key": "vc_live_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+      "is_active": true,
+      "daily_char_limit": 50000,
+      "created_at": "2026-10-15T00:00:00Z",
+      "last_used_at": null
+    },
+    {
+      "id": "key_web_demo_default",
+      "name": "Web Demo Client",
+      "key": "vc_live_w1e2b3d4e5m6o7k8e9y0z1x2c3v4b5n6",
+      "is_active": true,
+      "daily_char_limit": 20000,
+      "created_at": "2026-10-15T00:00:00Z",
+      "last_used_at": null
+    },
+    {
+      "id": "key_3a6cc8e551dd",
+      "name": "Test Key",
+      "key": "vc_live_12f0a129412bd93175c94d2f5727e654",
+      "is_active": true,
+      "daily_char_limit": 5000,
+      "created_at": "2026-10-15T14:42:36.487333+00:00",
+      "last_used_at": null
+    },
+    {
+      "id": "key_a11990033614",
+      "name": "Test Key",
+      "key": "vc_live_05644dc718809095eb3258073705e067",
+      "is_active": true,
+      "daily_char_limit": 5000,
+      "created_at": "2026-10-15T14:43:24.183432+00:00",
+      "last_used_at": null
+    },
+    {
+      "id": "key_348d3a75705e",
+      "name": "Test Key",
+      "key": "vc_live_18bebfdc4233bc1baf8b1e2b4d4199fa",
+      "is_active": true,
+      "daily_char_limit": 5000,
+      "created_at": "2026-10-15T14:43:44.356503+00:00",
+      "last_used_at": null
+    },
+    {
+      "id": "key_7a8a0e76621b",
+      "name": "Test Key",
+      "key": "vc_live_fbc46a47b7832066caa8d77640ddb4eb",
+      "is_active": true,
+      "daily_char_limit": 5000,
+      "created_at": "2026-10-15T14:53:37.172553+00:00",
+      "last_used_at": null
+    }
+  ],
+  "model_workers": [
+    {
+      "id": "worker-primary",
+      "url": "http://model-service:8001",
+      "api_key": "vtts_worker_secret_key_123",
+      "weight": 1,
+      "is_active": true
+    }
+  ],
+  "concurrency": {
+    "max_concurrent_tts": 5,
+    "max_queue_waiters": 12,
+    "daily_tts_char_limit": 100000,
+    "rate_limit_requests_per_minute": 60
+  },
+  "audio_cache": {
+    "max_size_mb": 2048,
+    "ttl_days": 7,
+    "clean_interval_sec": 3600
+  }
+}
