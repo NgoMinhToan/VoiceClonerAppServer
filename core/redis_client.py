@@ -250,12 +250,21 @@ async def check_rate_limit(user_id: str, max_requests: int = RATE_LIMIT_REQUESTS
 
 
 async def blacklist_token(token: str, ttl_seconds: int = 86400) -> None:
-    """Revoke JWT token by storing in blacklist."""
+    """Revoke JWT token by storing in blacklist (both in-memory fallback and redis)."""
     key = f"bl:{token}"
-    await redis_client.set(key, "1", ex=ttl_seconds)
+    await redis_client._fallback.set(key, "1", ex=ttl_seconds)
+    try:
+        await redis_client.set(key, "1", ex=ttl_seconds)
+    except Exception:
+        pass
 
 
 async def is_token_blacklisted(token: str) -> bool:
     """Check if token is revoked."""
     key = f"bl:{token}"
-    return await redis_client.exists(key)
+    if await redis_client._fallback.exists(key):
+        return True
+    try:
+        return await redis_client.exists(key)
+    except Exception:
+        return False

@@ -103,7 +103,18 @@
 ---
 
 ## 4. Kết Quả Kiểm Thử (Verification Suite)
-Toàn bộ **21/21 test cases** trong `VoiceClonerAppServer/tests/` đã được chạy và vượt qua 100%:
+Toàn bộ **31/31 test cases** trong `VoiceClonerAppServer/tests/` đã được chạy và vượt qua 100%:
+- `test_exceptions_and_security.py`:
+  - `test_register_invalid_email_and_short_password`: Xác thực email sai chuẩn và mật khẩu < 6 ký tự bị từ chối với 422.
+  - `test_login_wrong_credentials`: Đăng nhập sai mật khẩu hoặc tài khoản không tồn tại bị từ chối 401.
+  - `test_tampered_jwt_token_rejected`: Token JWT giả mạo hoặc sai chữ ký bị từ chối 401.
+  - `test_blacklisted_token_rejected_after_logout`: Token sau khi đăng xuất được đưa vào danh sách đen (Redis/InMemory blacklist) và bị từ chối 401.
+  - `test_idor_protection_between_users`: User B tuyệt đối không thể đọc thông tin, tải file audio, sửa, xóa hoặc dùng giọng clone của User A (toàn bộ trả về 404 để chống dò quét IDOR).
+  - `test_modify_or_delete_builtin_voice_rejected`: Cấm sửa hoặc xóa giọng đọc có sẵn 400.
+  - `test_cloned_slots_quota_exhaustion_and_release`: Kiểm soát chặt chẽ hạn mức 3/3 slot clone, vượt quá nhận 403, xóa giọng cũ giải phóng slot.
+  - `test_quota_rollback_on_worker_synthesis_failure`: Khi downstream worker gặp sự cố, hệ thống trả về 503 và hoàn lại 100% số ký tự đã trừ tạm thời.
+  - `test_clone_voice_empty_file_rejected`: Tải file audio rỗng bị từ chối 400.
+  - `test_management_unauthorized_access`: Truy cập quản trị không có key hoặc sai key bị từ chối 401, xóa user không tồn tại trả về 404.
 - `test_audio_cache.py`:
   - `test_audio_cache_hit_and_miss_flow`: Xác nhận lần gọi thứ nhất là `MISS` (tính quota, ghi cache), lần gọi thứ hai cùng câu thoại là `HIT` (trả về tức thì < 50ms, không gọi worker, không trừ quota).
   - `test_preview_audio_cache_flow`: Xác nhận nghe thử mẫu giọng cũng áp dụng cache tăng tốc.

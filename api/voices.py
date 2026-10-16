@@ -263,6 +263,11 @@ async def update_voice(
     db: AsyncSession = Depends(get_db),
 ):
     """Update settings of a custom cloned voice profile."""
+    # Check if voice is a built-in preset
+    builtin = voice_service.get_voice_by_id(voice_id)
+    if builtin and builtin.is_builtin:
+        raise HTTPException(status_code=400, detail="Không thể chỉnh sửa giọng nói có sẵn.")
+
     stmt = select(Voice).where(Voice.id == voice_id)
     res = await db.execute(stmt)
     voice = res.scalar_one_or_none()
@@ -292,6 +297,11 @@ async def delete_voice(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a custom cloned voice profile and free up a clone slot."""
+    # Check if voice is a built-in preset
+    builtin = voice_service.get_voice_by_id(voice_id)
+    if builtin and builtin.is_builtin:
+        raise HTTPException(status_code=400, detail="Không thể xóa giọng nói có sẵn.")
+
     stmt = select(Voice).where(Voice.id == voice_id)
     res = await db.execute(stmt)
     voice = res.scalar_one_or_none()
