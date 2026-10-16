@@ -98,14 +98,16 @@ def test_preview_audio_cache_flow(monkeypatch):
 
     monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_synth)
 
+    test_text = f"Bản nghe thử riêng biệt {time.time()}"
+
     # First preview call -> MISS
-    res1 = client.post("/v1/voices/preview", json={"voice_id": "pham_tuyen"})
+    res1 = client.post("/v1/voices/preview", json={"voice_id": "pham_tuyen", "text": test_text})
     assert res1.status_code == 200
     assert res1.headers.get("x-cache-status") == "MISS" or res1.headers.get("X-Cache-Status") == "MISS"
     assert preview_call_count == 1
 
     # Second preview call -> HIT
-    res2 = client.post("/v1/voices/preview", json={"voice_id": "pham_tuyen"})
+    res2 = client.post("/v1/voices/preview", json={"voice_id": "pham_tuyen", "text": test_text})
     assert res2.status_code == 200
     assert res2.headers.get("x-cache-status") == "HIT" or res2.headers.get("X-Cache-Status") == "HIT"
     assert preview_call_count == 1
