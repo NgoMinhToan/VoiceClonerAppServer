@@ -6,4 +6,6 @@ __pycache__/
 *.sqlite3
 storage/*.db
 storage/*.sqlite3
+storage/cloned_voices/
+storage/audio_cache/
 .env
