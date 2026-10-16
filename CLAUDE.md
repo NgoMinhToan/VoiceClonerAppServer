@@ -17,6 +17,12 @@ Guidance for Claude Code and AI agents working on `VoiceClonerAppServer`.
 
 ## Mandatory Developer & AI Agent Rules
 
+### 0. Initial Repository Setup
+When opening or cloning this repository, ensure pre-push verification hooks are active:
+```bash
+git config core.hooksPath .githooks
+```
+
 ### 1. Test Verification Before Push
 **Rule:** You MUST run and pass all test suites before making any git commit or push:
 ```bash

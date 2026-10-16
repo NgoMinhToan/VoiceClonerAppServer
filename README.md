@@ -103,4 +103,10 @@ Chạy bộ kiểm thử tự động pytest:
 ```bash
 pytest tests/ -v
 ```
-Toàn bộ 19 test cases kiểm tra capability load balancing, dynamic voice discovery, auth lifecycle, token blacklist, hot-reload settings, user management và dashboard delivery.
+Toàn bộ 31 test cases kiểm tra capability load balancing, dynamic voice discovery, auth lifecycle, token blacklist, hot-reload settings, audio cache hit/miss, user management và dashboard delivery.
+
+### Kích Hoạt Git Pre-Push Hook Cục Bộ:
+Để git tự động chạy toàn bộ test và ngăn chặn lệnh push nếu có lỗi:
+```bash
+git config core.hooksPath .githooks
+```
