@@ -16,7 +16,7 @@ if str(_SERVER_DIR) not in sys.path:
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -105,6 +105,44 @@ class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class ApiKeyValidationMiddleware(BaseHTTPMiddleware):
+    """
+    Validates X-API-Key on /v1/* client endpoints (excluding /v1/management).
+    When require_client_api_key is True, all client requests must provide a valid active key.
+    Even with a valid User Bearer token, requests without or with an invalid client key are rejected.
+    """
+    async def dispatch(self, request: Request, call_next):
+        if request.method != "OPTIONS" and request.url.path.startswith("/v1/") and not request.url.path.startswith("/v1/management"):
+            settings = settings_manager.get_settings()
+            x_api_key = request.headers.get("x-api-key") or request.query_params.get("api_key")
+            cleaned_key = (x_api_key or "").strip()
+
+            if settings.security.require_client_api_key:
+                if not cleaned_key:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Client API key required. Please provide a valid X-API-Key header."},
+                        headers={"WWW-Authenticate": "ApiKey"},
+                    )
+                key_record = settings_manager.find_client_key(cleaned_key)
+                if not key_record:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Invalid or deactivated client API key."},
+                        headers={"WWW-Authenticate": "ApiKey"},
+                    )
+            else:
+                if cleaned_key:
+                    key_record = settings_manager.find_client_key(cleaned_key)
+                    if not key_record:
+                        return JSONResponse(
+                            status_code=401,
+                            content={"detail": "Invalid or deactivated client API key."},
+                            headers={"WWW-Authenticate": "ApiKey"},
+                        )
+        return await call_next(request)
+
+
 # Add CORSMiddleware first
 app.add_middleware(
     CORSMiddleware,
@@ -116,6 +154,7 @@ app.add_middleware(
 
 # Add PrivateNetworkAccessMiddleware after CORSMiddleware so it wraps outer
 app.add_middleware(PrivateNetworkAccessMiddleware)
+app.add_middleware(ApiKeyValidationMiddleware)
 
 # Static files directory
 STATIC_DIR = _SERVER_DIR / "static"

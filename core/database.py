@@ -36,6 +36,17 @@ async def init_db():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            if str(engine.url).startswith("sqlite"):
+                from sqlalchemy import text
+                def _migrate_sqlite_schema(sync_conn):
+                    for tbl in ("api_usage_logs", "daily_usages"):
+                        res = sync_conn.execute(text(f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{tbl}'")).fetchone()
+                        if res and res[0] and "BIGINT" in res[0]:
+                            count = sync_conn.execute(text(f"SELECT COUNT(*) FROM {tbl}")).fetchone()[0]
+                            if count == 0:
+                                sync_conn.execute(text(f"DROP TABLE {tbl}"))
+                                Base.metadata.tables[tbl].create(sync_conn)
+                await conn.run_sync(_migrate_sqlite_schema)
         logger.info(f"Database schema initialized via {engine.url}")
     except Exception as e:
         if not str(engine.url).startswith("sqlite"):

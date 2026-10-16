@@ -223,7 +223,7 @@ async function fetchUsers() {
             ${u.auth_provider === 'google' ? '<i class="fa-brands fa-google mr-1"></i> Google' : '<i class="fa-solid fa-envelope mr-1"></i> Email'}
           </span>
         </td>
-        <td class="py-3 px-4 font-semibold text-slate-100">${u.max_cloned_slots} slots</td>
+        <td class="py-3 px-4 font-semibold text-slate-100"><span class="text-indigo-400 font-bold">${u.cloned_voices_count || 0}</span> / <span>${u.max_cloned_slots} slots</span></td>
         <td class="py-3 px-4 font-semibold text-emerald-400">${(u.tts_chars_today || 0).toLocaleString()} ký tự</td>
         <td class="py-3 px-4 text-xs text-slate-500">${u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}</td>
         <td class="py-3 px-4 text-right space-x-2">

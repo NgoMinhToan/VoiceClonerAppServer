@@ -69,6 +69,7 @@ class SettingsManager:
         self._path = Path(os.getenv("CONFIG_PATH", str(settings_path or DEFAULT_SETTINGS_PATH))).resolve()
         self._settings: Optional[AppSettings] = None
         self._on_change_hooks: List[Callable[[AppSettings], None]] = []
+        self._last_mtime: float = 0.0
         self._load()
 
     def register_on_change(self, hook: Callable[[AppSettings], None]):
@@ -102,6 +103,18 @@ class SettingsManager:
         ]
         return AppSettings(client_api_keys=default_keys, model_workers=default_workers)
 
+    def _check_and_reload(self):
+        """Check if settings file on disk was modified externally and reload automatically."""
+        if self._path.exists():
+            try:
+                current_mtime = self._path.stat().st_mtime
+                if current_mtime > self._last_mtime:
+                    logger.info(f"Detected external modification to {self._path} (mtime {current_mtime} > {self._last_mtime}). Hot-reloading...")
+                    self._load()
+                    self._trigger_hooks()
+            except Exception as e:
+                logger.warning(f"Error checking settings mtime: {e}")
+
     def _load(self):
         if not self._path.exists():
             self._settings = self._bootstrap_defaults()
@@ -112,6 +125,8 @@ class SettingsManager:
             with open(self._path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             self._settings = AppSettings.model_validate(data)
+            if self._path.exists():
+                self._last_mtime = self._path.stat().st_mtime
         except Exception as e:
             logger.error(f"Failed to parse settings from {self._path} ({e}). Bootstrapping defaults.")
             self._settings = self._bootstrap_defaults()
@@ -127,14 +142,18 @@ class SettingsManager:
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp_file, self._path)
+        if self._path.exists():
+            self._last_mtime = self._path.stat().st_mtime
         logger.info(f"Settings successfully written to {self._path}")
 
     def get_settings(self) -> AppSettings:
+        self._check_and_reload()
         if self._settings is None:
             self._load()
         return self._settings
 
     def update_settings(self, updates: Dict[str, Any]) -> AppSettings:
+        self._check_and_reload()
         current_data = self._settings.model_dump()
         for key, value in updates.items():
             if isinstance(value, dict) and key in current_data and isinstance(current_data[key], dict):
@@ -149,6 +168,7 @@ class SettingsManager:
         return self._settings
 
     def generate_client_key(self, name: str, daily_char_limit: int = 50000) -> ClientApiKeyConfig:
+        self._check_and_reload()
         key_token = f"vc_live_{secrets.token_hex(16)}"
         key_id = f"key_{secrets.token_hex(6)}"
         key_entry = ClientApiKeyConfig(
@@ -165,6 +185,7 @@ class SettingsManager:
         return key_entry
 
     def revoke_client_key(self, key_id: str) -> bool:
+        self._check_and_reload()
         original_len = len(self._settings.client_api_keys)
         self._settings.client_api_keys = [k for k in self._settings.client_api_keys if k.id != key_id]
         if len(self._settings.client_api_keys) < original_len:
@@ -174,6 +195,7 @@ class SettingsManager:
         return False
 
     def toggle_client_key(self, key_id: str, is_active: bool) -> bool:
+        self._check_and_reload()
         for k in self._settings.client_api_keys:
             if k.id == key_id:
                 k.is_active = is_active
@@ -185,6 +207,7 @@ class SettingsManager:
     def find_client_key(self, key_value: str) -> Optional[ClientApiKeyConfig]:
         if not key_value:
             return None
+        self._check_and_reload()
         stripped = key_value.strip()
         for k in self._settings.client_api_keys:
             if k.key == stripped and k.is_active:

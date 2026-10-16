@@ -25,7 +25,7 @@ def utc_now() -> datetime:
 class ApiUsageLog(Base):
     __tablename__ = "api_usage_logs"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(Integer().with_variant(BigInteger, "postgresql"), primary_key=True, autoincrement=True)
     timestamp = Column(DateTime, default=utc_now, nullable=False, index=True)
     client_key_id = Column(String(64), nullable=False, index=True)
     client_key_name = Column(String(255), nullable=False)
@@ -90,7 +90,7 @@ class Voice(Base):
 class DailyUsage(Base):
     __tablename__ = "daily_usages"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(Integer().with_variant(BigInteger, "postgresql"), primary_key=True, autoincrement=True)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     usage_date = Column(Date, nullable=False, index=True)
     tts_characters_used = Column(Integer, default=0, nullable=False)

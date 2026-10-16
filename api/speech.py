@@ -1,6 +1,7 @@
 import base64
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -14,9 +15,9 @@ from VoiceClonerAppServer.core.redis_client import (
     check_rate_limit,
     rollback_daily_quota,
 )
-from VoiceClonerAppServer.core.security import get_optional_user, verify_client_api_key
+from VoiceClonerAppServer.core.security import get_current_user, get_optional_user, verify_client_api_key
 from VoiceClonerAppServer.core.settings_manager import ClientApiKeyConfig, settings_manager
-from VoiceClonerAppServer.models.db_models import User, Voice
+from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice, utc_now
 from VoiceClonerAppServer.models.schemas import PreviewSpeechRequest, SynthesisRequest
 from VoiceClonerAppServer.services.cache_service import cache_service
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
@@ -32,7 +33,7 @@ router = APIRouter(tags=["Speech"])
 async def create_speech(
     request: SynthesisRequest,
     req_raw: Request,
-    user: Optional[User] = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
@@ -46,15 +47,19 @@ async def create_speech(
     client_key: Optional[ClientApiKeyConfig] = None
     if x_api_key:
         client_key = settings_manager.find_client_key(x_api_key)
-
-    if not user and not client_key:
-        # Check if settings require client key
-        if settings_manager.get_settings().security.require_client_api_key:
+        if not client_key:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Client API key required. Please provide a valid X-API-Key header or Bearer Token.",
-                headers={"WWW-Authenticate": "Bearer, ApiKey"},
+                detail="Invalid or deactivated client API key.",
+                headers={"WWW-Authenticate": "ApiKey"},
             )
+
+    if settings_manager.get_settings().security.require_client_api_key and not client_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Client API key required. Please provide a valid X-API-Key header.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
 
     # 2. Parse text input
     input_text = (request.input or request.text or "").strip()
@@ -64,12 +69,12 @@ async def create_speech(
     char_count = len(input_text)
     voice_name = request.voice_id or request.voice or "minh_duc"
     response_format = (request.response_format or request.format or "wav").lower()
-    client_name = client_key.name if client_key else (user.full_name if user else "Anonymous Client")
-    client_id = client_key.id if client_key else (user.id if user else "anonymous")
+    client_name = client_key.name if client_key else current_user.full_name
+    client_id = client_key.id if client_key else current_user.id
 
     logger.info(
         f"🎙️ [TTS REQUEST] voice='{voice_name}' | text='{input_text[:50]}...' ({char_count} chars) | "
-        f"client='{client_name}' | format={response_format}"
+        f"user='{current_user.email}' | client='{client_name}' | format={response_format}"
     )
 
     # 3. Check Audio Cache (deterministic SHA-256 excluding speed/pitch for player-side tuning)
@@ -123,20 +128,19 @@ async def create_speech(
 
     logger.info(f"🔄 [AUDIO CACHE MISS] voice='{voice_name}', text_len={char_count} -> Checking quota and dispatching to worker...")
 
-    # 4. Check rate limit & user daily quota if authenticated (Cache MISS path)
-    if user:
-        if not await check_rate_limit(user.id):
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
-            )
+    # 4. Check rate limit & user daily quota (Cache MISS path)
+    if not await check_rate_limit(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
+        )
 
-        daily_limit = settings_manager.get_settings().concurrency.daily_tts_char_limit
-        if not await check_and_increment_daily_quota(user.id, char_count, limit=daily_limit):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Bạn đã sử dụng hết hạn mức {daily_limit:,} ký tự hôm nay. Hạn mức sẽ được làm mới vào 00:00.",
-            )
+    daily_limit = settings_manager.get_settings().concurrency.daily_tts_char_limit
+    if not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Bạn đã sử dụng hết hạn mức {daily_limit:,} ký tự hôm nay. Hạn mức sẽ được làm mới vào 00:00.",
+        )
 
     # 5. Resolve voice and cloned embeddings
     ref_npz_base64 = request.ref_npz_base64
@@ -148,9 +152,8 @@ async def create_speech(
     db_voice = res.scalar_one_or_none()
 
     if db_voice and not db_voice.is_builtin:
-        if not user or db_voice.user_id != user.id:
-            if user:
-                await rollback_daily_quota(user.id, char_count)
+        if db_voice.user_id != current_user.id:
+            await rollback_daily_quota(current_user.id, char_count)
             raise HTTPException(status_code=404, detail="Không tìm thấy giọng nói.")
 
         # Load precomputed .npz embedding if present
@@ -196,6 +199,31 @@ async def create_speech(
             status_code=200,
         )
 
+        # Persist DailyUsage for user in SQL database
+        try:
+            today = datetime.now(timezone.utc).date()
+            usage_stmt = select(DailyUsage).where(
+                DailyUsage.user_id == current_user.id,
+                DailyUsage.usage_date == today,
+            )
+            usage_res = await db.execute(usage_stmt)
+            daily_usage_record = usage_res.scalar_one_or_none()
+            if daily_usage_record:
+                daily_usage_record.tts_characters_used += char_count
+                daily_usage_record.updated_at = utc_now()
+            else:
+                daily_usage_record = DailyUsage(
+                    user_id=current_user.id,
+                    usage_date=today,
+                    tts_characters_used=char_count,
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+                db.add(daily_usage_record)
+            await db.commit()
+        except Exception as ue:
+            logger.warning(f"Could not persist DailyUsage record: {ue}")
+
         logger.info(f"✅ [TTS COMPLETED] via worker '{worker_id}' in {duration_ms:.2f}ms: received {len(audio_bytes):,} bytes @ 48kHz")
 
         media_type = "audio/pcm" if response_format == "pcm" else "audio/wav"
@@ -208,8 +236,7 @@ async def create_speech(
         }
         return Response(content=audio_bytes, media_type=media_type, headers=headers)
     except Exception as e:
-        if user:
-            await rollback_daily_quota(user.id, char_count)
+        await rollback_daily_quota(current_user.id, char_count)
         duration_ms = (time.perf_counter() - t0) * 1000.0
         logger.error(f"Speech synthesis failure: {e}", exc_info=True)
         raise HTTPException(
@@ -221,7 +248,7 @@ async def create_speech(
 @router.post("/v1/voices/preview")
 async def preview_voice(
     request: PreviewSpeechRequest,
-    user: Optional[User] = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -247,7 +274,7 @@ async def preview_voice(
         if not db_voice:
             raise HTTPException(status_code=404, detail="Không tìm thấy giọng nói.")
 
-        if not db_voice.is_builtin and (not user or db_voice.user_id != user.id):
+        if not db_voice.is_builtin and db_voice.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="Không tìm thấy giọng nói.")
 
         if not sample_text:

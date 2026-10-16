@@ -10,7 +10,7 @@ from VoiceClonerAppServer.core.database import init_db
 from VoiceClonerAppServer.core.settings_manager import settings_manager
 from VoiceClonerAppServer.services import model_dispatcher
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-API-Key": "vc_live_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"})
 
 
 @pytest.fixture(autouse=True)

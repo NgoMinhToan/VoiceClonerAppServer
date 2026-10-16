@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, func, select
 
 from VoiceClonerAppServer.core.settings_manager import (
     AppSettings,
@@ -12,6 +12,7 @@ from VoiceClonerAppServer.core.settings_manager import (
     settings_manager,
 )
 from VoiceClonerAppServer.core.database import AsyncSessionLocal
+from VoiceClonerAppServer.core.redis_client import get_daily_usage
 from VoiceClonerAppServer.core.security import verify_management_key
 from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
@@ -147,13 +148,20 @@ async def list_users():
 
         results = []
         for u in users:
-            # Query usage today
-            usage_query = select(DailyUsage.tts_characters_used).where(
-                DailyUsage.user_id == u.id,
-                DailyUsage.usage_date == today,
-            )
-            usage_res = await session.execute(usage_query)
-            chars_today = usage_res.scalar_one_or_none() or 0
+            # 1. Query cloned voices count
+            cloned_stmt = select(func.count(Voice.id)).where(Voice.user_id == u.id)
+            cloned_res = await session.execute(cloned_stmt)
+            cloned_count = cloned_res.scalar() or 0
+
+            # 2. Query usage today from Redis (real-time) with DB fallback
+            chars_today = await get_daily_usage(u.id)
+            if not chars_today:
+                usage_query = select(DailyUsage.tts_characters_used).where(
+                    DailyUsage.user_id == u.id,
+                    DailyUsage.usage_date == today,
+                )
+                usage_res = await session.execute(usage_query)
+                chars_today = usage_res.scalar_one_or_none() or 0
 
             results.append({
                 "id": u.id,
@@ -161,6 +169,7 @@ async def list_users():
                 "full_name": u.full_name,
                 "auth_provider": u.auth_provider,
                 "avatar_url": u.avatar_url,
+                "cloned_voices_count": cloned_count,
                 "max_cloned_slots": u.max_cloned_slots,
                 "tts_chars_today": chars_today,
                 "created_at": u.created_at.isoformat() if u.created_at else None,

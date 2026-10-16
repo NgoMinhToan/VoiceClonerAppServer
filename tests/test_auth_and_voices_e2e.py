@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from VoiceClonerAppServer.main import app
 from VoiceClonerAppServer.core.database import init_db
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-API-Key": "vc_live_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"})
 
 
 @pytest.fixture(autouse=True)

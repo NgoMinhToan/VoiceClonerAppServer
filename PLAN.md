@@ -126,4 +126,25 @@ Toàn bộ **31/31 test cases** trong `VoiceClonerAppServer/tests/` đã đượ
   - Khẳng định khả năng tự động truy vấn và tổng hợp danh mục giọng từ nhiều worker bất kỳ, tự động loại bỏ trùng lặp ID.
 - `test_auth_and_voices_e2e.py`:
   - Vòng đời tài khoản người dùng, token refresh, clone voice lưu DB và tổng hợp âm thanh.
-- `test_settings_and_3tier_auth.py`, `test_management_users_and_pna.py`, `test_dashboard_ui.py`, `test_docker_packaging.py`.
+- `test_settings_and_3tier_auth.py`:
+  - Quản lý cấu hình 3-tier, cập nhật runtime, từ chối client key sai/vô hiệu hóa, tự động hot-reload khi file `settings.json` bị chỉnh sửa trực tiếp trên đĩa (disk mtime check).
+- `test_management_users_and_pna.py`:
+  - Private Network Access headers, luồng quản lý người dùng, hiển thị chính xác số slot clone đã dùng / tối đa và số ký tự TTS hôm nay.
+- `test_dashboard_ui.py`, `test_docker_packaging.py`.
+
+---
+
+## 5. Phase 16: Tự Động Hot-Reload File Cấu Hình & Siết Chặt Xác Thực 3-Tier Client API Key Cho Toàn Bộ Gateway
+- **Tự động hot-reload cấu hình đĩa (`settings.json`)**: `SettingsManager` theo dõi `st_mtime` của `config/settings.json`, tự động nạp lại cấu hình và kích hoạt change hooks ngay khi phát hiện chỉnh sửa từ editor mà không cần restart server.
+- **Siết chặt xác thực Client API Key & User Token toàn diện**:
+  - Bắt buộc mọi request từ client (Android, Web Demo) gửi tới `/v1/*` phải có `X-API-Key` hợp lệ khi `require_client_api_key = True`.
+  - Nếu thiếu hoặc rỗng `X-API-Key`: Lập tức từ chối với HTTP 401 (`Client API key required. Please provide a valid X-API-Key header.`).
+  - Nếu `X-API-Key` sai, không tồn tại hoặc bị tạm khóa: Lập tức từ chối với HTTP 401 (`Invalid or deactivated client API key.`).
+  - **Bắt buộc định danh người dùng đối với chuyển đổi giọng & nhân bản giọng**:
+    - Không phục vụ khách vãng lai (unauthenticated guest). Cả `/v1/audio/speech`, `/v1/voices/preview` và `/v1/voices/clone` bắt buộc phải có `current_user: User = Depends(get_current_user)` để kiểm soát rate limit và trừ chính xác hạn mức ký tự (quota).
+    - Request thiếu User Token lập tức bị từ chối với HTTP 401 (`Yêu cầu xác thực`).
+- **Đồng bộ chuẩn xác Ký tự TTS & Slot người dùng trên Web Dashboard**:
+  - API `/v1/management/users` truy vấn đồng thời số lượng giọng clone thực tế (`cloned_voices_count`) cùng `max_cloned_slots`.
+  - Chỉ số `tts_chars_today` được lấy theo thời gian thực từ Redis và đồng bộ lưu trữ bền vững vào bảng SQL `daily_usages`.
+  - Bảng điều khiển Web Dashboard hiển thị rõ ràng: `X / Y slots` và số lượng ký tự TTS đã sử dụng hôm nay.
+- **Đạt 38/38 test cases tự động** trong `VoiceClonerAppServer` vượt qua 100%.
