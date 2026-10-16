@@ -23,7 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from VoiceClonerAppServer.api.auth import router as auth_router
 from VoiceClonerAppServer.api.management import router as management_router
 from VoiceClonerAppServer.api.speech import router as speech_router
-from VoiceClonerAppServer.api.system import router as system_router
+from VoiceClonerAppServer.api.system import get_local_ip, router as system_router
 from VoiceClonerAppServer.api.voices import router as voices_router
 from VoiceClonerAppServer.core.database import init_db
 from VoiceClonerAppServer.core.redis_client import redis_client
@@ -38,16 +38,24 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = settings_manager.get_settings()
+    lan_ip = get_local_ip()
+
+    print("\n" + "=" * 68)
+    print(" [VOICE CLONER APP SERVER] API GATEWAY & REVERSE PROXY")
+    print(f" * Audio Standard:       48,000 Hz (48kHz WAV Studio Standard)")
+    print(f" * Local Gateway URL:    http://localhost:{settings.server.port}")
+    print(f" * Real Phone (LAN) URL: http://{lan_ip}:{settings.server.port}")
+    print(f" * Dashboard Console:    http://localhost:{settings.server.port}/dashboard")
+    print(f" * Swagger API Docs:     http://localhost:{settings.server.port}/docs")
+    print(f" * Upstream Workers:     {len(settings.model_workers)}")
+    print(f" * Active Client Keys:   {len(settings.client_api_keys)}")
+    print("=" * 68 + "\n")
+
     logger.info("Initializing VoiceClonerAppServer database schema...")
     try:
         await init_db()
     except Exception as e:
         logger.warning(f"Database initialization warning: {e}")
-
-    logger.info(
-        f"VoiceClonerAppServer running on http://{settings.server.host}:{settings.server.port} "
-        f"(Workers: {len(settings.model_workers)}, Client Keys: {len(settings.client_api_keys)})"
-    )
 
     # Trigger worker capability discovery and voice aggregation on boot
     try:
@@ -60,6 +68,7 @@ async def lifespan(app: FastAPI):
     settings_manager.register_on_change(lambda _: asyncio.create_task(voice_service.discover_all_workers()))
 
     yield
+    print("\n[VoiceClonerAppServer draining connections and shutting down...]\n")
     logger.info("Draining connections and shutting down VoiceClonerAppServer...")
     await model_dispatcher.aclose()
     await redis_client.aclose()

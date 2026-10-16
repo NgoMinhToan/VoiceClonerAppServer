@@ -18,6 +18,7 @@ from VoiceClonerAppServer.core.security import get_optional_user, verify_client_
 from VoiceClonerAppServer.core.settings_manager import ClientApiKeyConfig, settings_manager
 from VoiceClonerAppServer.models.db_models import User, Voice
 from VoiceClonerAppServer.models.schemas import PreviewSpeechRequest, SynthesisRequest
+from VoiceClonerAppServer.services.cache_service import cache_service
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 from VoiceClonerAppServer.services.usage_tracker import usage_tracker
 from VoiceClonerAppServer.services.voice_service import CLONED_VOICES_DIR, voice_service
@@ -63,8 +64,66 @@ async def create_speech(
     char_count = len(input_text)
     voice_name = request.voice_id or request.voice or "minh_duc"
     response_format = (request.response_format or request.format or "wav").lower()
+    client_name = client_key.name if client_key else (user.full_name if user else "Anonymous Client")
+    client_id = client_key.id if client_key else (user.id if user else "anonymous")
 
-    # 3. Check rate limit & user daily quota if authenticated
+    logger.info(
+        f"🎙️ [TTS REQUEST] voice='{voice_name}' | text='{input_text[:50]}...' ({char_count} chars) | "
+        f"client='{client_name}' | format={response_format}"
+    )
+
+    # 3. Check Audio Cache (deterministic SHA-256 excluding speed/pitch for player-side tuning)
+    cache_key = cache_service.get_cache_key(
+        voice_id=voice_name,
+        text=input_text,
+        smart_pause=request.smart_pause,
+        sample_rate=48000,
+    )
+    cached_file = cache_service.get_cached_file(cache_key)
+
+    if cached_file and response_format in ("wav", "pcm"):
+        t_cache = time.perf_counter()
+        wav_bytes = cached_file.read_bytes()
+        duration_ms = (time.perf_counter() - t_cache) * 1000.0
+
+        logger.info(
+            f"⚡ [AUDIO CACHE HIT] voice='{voice_name}', text_len={char_count} -> Instant 48kHz WAV "
+            f"served from cache ({cached_file.name}, {len(wav_bytes):,} bytes, {duration_ms:.2f}ms) [Zero Inference & Quota Exempt]"
+        )
+
+        await usage_tracker.log_usage(
+            client_key_id=client_id,
+            client_key_name=client_name,
+            endpoint="/v1/audio/speech",
+            model_worker_id="cache-hit",
+            char_count=char_count,
+            latency_ms=duration_ms,
+            status_code=200,
+        )
+
+        if response_format == "pcm":
+            pcm_data = wav_bytes[44:] if len(wav_bytes) > 44 else wav_bytes
+            headers = {
+                "Content-Type": "audio/pcm",
+                "X-Sample-Rate": "48000",
+                "X-Execution-Time-Ms": f"{duration_ms:.2f}",
+                "X-Cache-Status": "HIT",
+                "X-Model-Worker": "cache",
+            }
+            return Response(content=pcm_data, media_type="audio/pcm", headers=headers)
+        else:
+            headers = {
+                "Content-Type": "audio/wav",
+                "X-Sample-Rate": "48000",
+                "X-Execution-Time-Ms": f"{duration_ms:.2f}",
+                "X-Cache-Status": "HIT",
+                "X-Model-Worker": "cache",
+            }
+            return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
+
+    logger.info(f"🔄 [AUDIO CACHE MISS] voice='{voice_name}', text_len={char_count} -> Checking quota and dispatching to worker...")
+
+    # 4. Check rate limit & user daily quota if authenticated (Cache MISS path)
     if user:
         if not await check_rate_limit(user.id):
             raise HTTPException(
@@ -79,7 +138,7 @@ async def create_speech(
                 detail=f"Bạn đã sử dụng hết hạn mức {daily_limit:,} ký tự hôm nay. Hạn mức sẽ được làm mới vào 00:00.",
             )
 
-    # 4. Resolve voice and cloned embeddings
+    # 5. Resolve voice and cloned embeddings
     ref_npz_base64 = request.ref_npz_base64
     ref_audio_path = request.ref_audio_path
 
@@ -118,9 +177,15 @@ async def create_speech(
 
         duration_ms = (time.perf_counter() - t0) * 1000.0
 
+        # Persist synthesized WAV to audio cache
+        if response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
+            try:
+                cache_service.save_cache(cache_key, audio_bytes)
+                logger.info(f"💾 [AUDIO CACHE SAVED] Key {cache_key[:12]}... ({len(audio_bytes):,} bytes @ 48kHz saved to storage/audio_cache)")
+            except Exception as ce:
+                logger.warning(f"Could not persist audio cache: {ce}")
+
         # Asynchronous usage logging
-        client_id = client_key.id if client_key else (user.id if user else "anonymous")
-        client_name = client_key.name if client_key else (user.full_name if user else "Anonymous Client")
         await usage_tracker.log_usage(
             client_key_id=client_id,
             client_key_name=client_name,
@@ -131,11 +196,14 @@ async def create_speech(
             status_code=200,
         )
 
+        logger.info(f"✅ [TTS COMPLETED] via worker '{worker_id}' in {duration_ms:.2f}ms: received {len(audio_bytes):,} bytes @ 48kHz")
+
         media_type = "audio/pcm" if response_format == "pcm" else "audio/wav"
         headers = {
             "Content-Type": media_type,
             "X-Sample-Rate": "48000",
             "X-Execution-Time-Ms": f"{duration_ms:.2f}",
+            "X-Cache-Status": "MISS",
             "X-Model-Worker": worker_id,
         }
         return Response(content=audio_bytes, media_type=media_type, headers=headers)
@@ -192,7 +260,22 @@ async def preview_voice(
             ref_audio_path = db_voice.ref_audio_path
 
     if not sample_text:
-        sample_text = "Xin chào! Đây là bản nghe thử được kết xuất trực tiếp bằng công nghệ AI VieNeu-TTS 48kHz."
+        sample_text = "Xin chào! Đây là bản nghe thử được kết xuất trực tiếp bằng công nghệ AI Neural 48kHz."
+
+    preview_cache_key = cache_service.get_cache_key(
+        voice_id=f"preview_{voice_id}",
+        text=sample_text,
+        smart_pause=True,
+        sample_rate=48000,
+    )
+    cached_preview = cache_service.get_cached_file(preview_cache_key)
+    if cached_preview:
+        logger.info(f"⚡ [PREVIEW CACHE HIT] voice='{voice_id}' -> Instant preview returned from cache ({cached_preview.name})")
+        return Response(
+            content=cached_preview.read_bytes(),
+            media_type="audio/wav",
+            headers={"Content-Type": "audio/wav", "X-Sample-Rate": "48000", "X-Cache-Status": "HIT"},
+        )
 
     try:
         audio_bytes, exec_sec, worker_id = await model_dispatcher.synthesize(
@@ -205,7 +288,16 @@ async def preview_voice(
             ref_audio_path=ref_audio_path,
             ref_npz_base64=ref_npz_base64,
         )
-        return Response(content=audio_bytes, media_type="audio/wav")
+        if audio_bytes and len(audio_bytes) > 44:
+            try:
+                cache_service.save_cache(preview_cache_key, audio_bytes)
+            except Exception:
+                pass
+        return Response(
+            content=audio_bytes,
+            media_type="audio/wav",
+            headers={"Content-Type": "audio/wav", "X-Sample-Rate": "48000", "X-Cache-Status": "MISS"},
+        )
     except Exception as e:
         logger.error(f"Preview synthesis error: {e}")
         raise HTTPException(status_code=500, detail="Không thể kết xuất bản nghe thử.")

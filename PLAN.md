@@ -78,8 +78,8 @@
 ### 2.3 Nhóm Tổng Hợp & Nghe Thử (`/v1/audio`, `/v1/voices/preview`)
 | Phương thức | Endpoint | Header / Auth | Mô tả |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/v1/audio/speech` | Bearer hoặc Client Key | Tổng hợp âm thanh 48kHz WAV từ văn bản (kiểm tra quota ký tự, lọc worker theo voice, điều phối Least-Active) |
-| `POST` | `/v1/voices/preview` | Bearer hoặc Client Key | Kết xuất mẫu nghe thử nhanh |
+| `POST` | `/v1/audio/speech` | Bearer hoặc Client Key | Tổng hợp âm thanh 48kHz WAV từ văn bản (tích hợp Audio Cache SHA-256 < 5ms & miễn trừ quota, kiểm tra quota ký tự, lọc worker theo voice, điều phối Least-Active) |
+| `POST` | `/v1/voices/preview` | Bearer hoặc Client Key | Kết xuất mẫu nghe thử nhanh (hỗ trợ Audio Cache) |
 
 ### 2.4 Nhóm Quản Trị Hệ Thống (`/v1/management`, `/dashboard`)
 | Phương thức | Endpoint | Header / Auth | Mô tả |
@@ -92,8 +92,21 @@
 
 ---
 
-## 3. Kết Quả Kiểm Thử (Verification Suite)
-Toàn bộ **19/19 test cases** trong `VoiceClonerAppServer/tests/` đã được chạy và vượt qua 100%:
+## 3. Kiến Trúc Bộ Nhớ Đệm Âm Thanh (Audio Caching Architecture)
+- **Tạo Cache Key Tất Định (`cache_service.get_cache_key`)**:
+  - Key được mã hóa bằng SHA-256: `sha256(voice_id + ":" + text.strip() + ":" + smart_pause + ":48000hz")`.
+  - Không bao gồm tốc độ (speed) và cao độ (pitch) vì các thông số này được điều khiển thời gian thực phía trình phát client cho độ trễ bằng 0.
+- **Quy trình Xử Lý Cache:**
+  - **Cache HIT:** Trả về file WAV đã cache trực tiếp từ disk trong **< 10ms**, trả kèm headers `X-Cache-Status: HIT`, `X-Sample-Rate: 48000`, `X-Model-Worker: cache`. Hoàn toàn không gọi sang AI worker và miễn trừ tính quota ký tự cho người dùng.
+  - **Cache MISS:** Trừ quota ký tự, chuyển tiếp tới worker phù hợp, sau đó lưu nguyên tử (atomic write qua temp file) vào `storage/audio_cache/{key}.wav` và trả về `X-Cache-Status: MISS`.
+
+---
+
+## 4. Kết Quả Kiểm Thử (Verification Suite)
+Toàn bộ **21/21 test cases** trong `VoiceClonerAppServer/tests/` đã được chạy và vượt qua 100%:
+- `test_audio_cache.py`:
+  - `test_audio_cache_hit_and_miss_flow`: Xác nhận lần gọi thứ nhất là `MISS` (tính quota, ghi cache), lần gọi thứ hai cùng câu thoại là `HIT` (trả về tức thì < 50ms, không gọi worker, không trừ quota).
+  - `test_preview_audio_cache_flow`: Xác nhận nghe thử mẫu giọng cũng áp dụng cache tăng tốc.
 - `test_capability_load_balancing.py`:
   - `test_capability_routing_matches_supported_voice`: Khẳng định request voice A chỉ đến worker hỗ trợ voice A, request voice C chỉ đến worker hỗ trợ voice C.
   - `test_capability_routing_least_active_among_shared_voice`: Khẳng định với voice dùng chung giữa nhiều worker, thuật toán chọn đúng worker ít việc nhất.
