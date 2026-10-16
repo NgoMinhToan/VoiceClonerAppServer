@@ -1,9 +1,12 @@
+import asyncio
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
+import httpx
 from VoiceClonerAppServer.models.schemas import VoiceProfileModel, VoiceUpdateRequest
 
 logger = logging.getLogger("VoiceClonerAppServer.VoiceService")
@@ -12,8 +15,8 @@ STORAGE_DIR = Path(__file__).resolve().parent.parent / "storage"
 CLONED_VOICES_DIR = STORAGE_DIR / "cloned_voices"
 CLONED_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
-# 23 Preset built-in voices matching VieNeu-TTS v3 Turbo standard
-DEFAULT_PRESET_VOICES: List[VoiceProfileModel] = [
+# Cold-boot offline fallback voices (retained strictly for offline cold boot resilience before any worker is discovered)
+FALLBACK_PRESET_VOICES: List[VoiceProfileModel] = [
     VoiceProfileModel(
         id="minh_duc",
         name="Minh Đức (Mặc định)",
@@ -456,13 +459,143 @@ DEFAULT_PRESET_VOICES: List[VoiceProfileModel] = [
 
 class VoiceService:
     def __init__(self):
-        self._presets: Dict[str, VoiceProfileModel] = {v.id: v for v in DEFAULT_PRESET_VOICES}
+        self._lock = threading.RLock()
+        self._fallback_presets: Dict[str, VoiceProfileModel] = {v.id: v for v in FALLBACK_PRESET_VOICES}
+        self._discovered_presets: Dict[str, VoiceProfileModel] = {}
+        self._is_discovered: bool = False
+
+    def _enrich_worker_voice(self, v_item: Dict[str, Any]) -> VoiceProfileModel:
+        """Enrich raw worker voice metadata with UI styling attributes."""
+        voice_id = str(v_item.get("id") or "").strip().lower()
+        name = str(v_item.get("name") or voice_id).strip()
+
+        # If voice matches known curated fallback, inherit rich visuals
+        if voice_id in self._fallback_presets:
+            curated = self._fallback_presets[voice_id]
+            return curated.model_copy(update={
+                "name": name,
+                "description": v_item.get("description") or curated.description,
+                "gender": v_item.get("gender") or curated.gender,
+            })
+
+        # Otherwise synthesize sensible generic UI defaults
+        gender = str(v_item.get("gender", "male")).lower()
+        desc = str(v_item.get("description", ""))
+        style = str(v_item.get("style", "tu_nhien"))
+        sample_rate = int(v_item.get("sample_rate", 48000))
+        color_hex = 0xFF4648D4 if gender == "male" else 0xFFEC4899
+        icon = "graphic_eq" if gender == "male" else "record_voice_over"
+
+        return VoiceProfileModel(
+            id=voice_id,
+            name=name,
+            tag="AI Voice",
+            spec=f"{sample_rate // 1000}kHz • HQ",
+            lang="vi",
+            accent="Chuẩn Nam Bắc" if gender == "male" else "Chuẩn Nữ Bắc",
+            gender=gender,
+            description=desc or f"Giọng đọc AI tiêu chuẩn ({style})",
+            is_default=False,
+            speed=1.0,
+            pitch=0,
+            emotion=85,
+            category="Thuyết minh",
+            accent_color_hex=color_hex,
+            icon_name=icon,
+            sample_text=f"Chào bạn! Tôi là {name}, đây là bản nghe thử được kết xuất trực tiếp bằng công nghệ AI Neural {sample_rate // 1000}kHz.",
+            is_builtin=True,
+        )
+
+    def update_discovered_voices(self, dynamic_catalog: Dict[str, VoiceProfileModel]) -> None:
+        """Atomically update the discovered preset voices catalog."""
+        with self._lock:
+            self._discovered_presets = dict(dynamic_catalog)
+            self._is_discovered = bool(dynamic_catalog)
+            logger.info(f"Updated dynamic voice catalog with {len(self._discovered_presets)} preset voices.")
+
+    async def discover_all_workers(self, http_client: Optional[httpx.AsyncClient] = None) -> int:
+        """
+        Dynamically query all active upstream model workers via GET /internal/v1/voices,
+        aggregate & deduplicate voices, and register capabilities in ModelDispatcher.
+        """
+        from VoiceClonerAppServer.core.settings_manager import settings_manager
+        from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
+
+        settings = settings_manager.get_settings()
+        workers = [w for w in settings.model_workers if w.is_active]
+        if not workers:
+            return len(self.list_builtin_voices())
+
+        close_client = False
+        if http_client is None:
+            http_client = httpx.AsyncClient(timeout=5.0)
+            close_client = True
+
+        aggregated_catalog: Dict[str, VoiceProfileModel] = {}
+        try:
+            for w in workers:
+                clean_url = w.url.rstrip("/")
+                headers = {"X-API-Key": w.api_key} if w.api_key else {}
+                try:
+                    # Try /internal/v1/voices first, fallback to /v1/voices
+                    res = await http_client.get(f"{clean_url}/internal/v1/voices", headers=headers)
+                    if res.status_code != 200:
+                        res = await http_client.get(f"{clean_url}/v1/voices", headers=headers)
+
+                    if res.status_code == 200:
+                        data = res.json()
+                        raw_voices = data.get("voices") or data.get("data") or (data if isinstance(data, list) else [])
+                        supported_ids: Set[str] = set()
+
+                        for item in raw_voices:
+                            if isinstance(item, dict):
+                                profile = self._enrich_worker_voice(item)
+                                aggregated_catalog[profile.id] = profile
+                                supported_ids.add(profile.id.lower())
+                                supported_ids.add(profile.name.lower())
+
+                        # Register capabilities in model_dispatcher
+                        model_dispatcher.register_worker_capabilities(
+                            worker_url=w.url,
+                            supported_voices=supported_ids,
+                            supports_cloning=True,
+                            worker_id=w.id,
+                        )
+                        logger.info(f"Discovered {len(supported_ids)} voice IDs from worker '{w.id}' ({w.url})")
+                except Exception as e:
+                    logger.warning(f"Failed to discover voices from worker '{w.id}' ({w.url}): {e}")
+
+            if aggregated_catalog:
+                self.update_discovered_voices(aggregated_catalog)
+        finally:
+            if close_client:
+                await http_client.aclose()
+
+        return len(self.list_builtin_voices())
 
     def list_builtin_voices(self) -> List[VoiceProfileModel]:
-        return list(self._presets.values())
+        """Return dynamically discovered voices, or fallback presets if no workers discovered yet."""
+        with self._lock:
+            if self._is_discovered and self._discovered_presets:
+                return list(self._discovered_presets.values())
+            return list(self._fallback_presets.values())
 
     def get_voice_by_id(self, voice_id: str) -> Optional[VoiceProfileModel]:
-        return self._presets.get(voice_id)
+        clean_id = (voice_id or "").strip().lower()
+        with self._lock:
+            if self._is_discovered and self._discovered_presets:
+                if clean_id in self._discovered_presets:
+                    return self._discovered_presets[clean_id]
+                for v in self._discovered_presets.values():
+                    if v.name.lower() == clean_id:
+                        return v
+
+            if clean_id in self._fallback_presets:
+                return self._fallback_presets[clean_id]
+            for v in self._fallback_presets.values():
+                if v.name.lower() == clean_id:
+                    return v
+            return None
 
 
 voice_service = VoiceService()

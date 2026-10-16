@@ -1,18 +1,19 @@
 # VoiceClonerAppServer
 
-API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Tích hợp xác thực người dùng JWT, quản lý slot clone, và bảng điều khiển quản trị lấy cảm hứng từ [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)).
+API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Tích hợp Dynamic Voice Discovery, Capability-Aware Least-Active Load Balancer, User Authentication JWT, và Bảng điều khiển lấy cảm hứng từ [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)).
 
 ---
 
-## 1. Tổng Quan Kiến Trúc
+## 1. Tổng Quan Kiến Trúc Độc Lập
 
-`VoiceClonerAppServer` đóng vai trò là Gateway trung tâm điều phối toàn bộ luồng hoạt động của hệ thống Voice Cloner:
-- **Proxy điều phối tải (Least-Active)**: Chuyển tiếp các yêu cầu tổng hợp âm thanh (TTS) và trích xuất embedding giọng nói đến các cụm worker inference [vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server).
+`VoiceClonerAppServer` được thiết kế hoàn toàn tách rời, không gắn cứng với bất kỳ model AI hay nhà cung cấp giọng đọc cụ thể nào:
+- **Chấp nhận mọi Voice Server tuân thủ chuẩn Voice API**: Gateway có thể kết nối tới [vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server) hoặc bất kỳ cụm máy chủ giọng nói AI nào khác có cùng chuẩn API.
+- **Dynamic Voice Discovery**: Khi khởi động hoặc khi cấu hình worker thay đổi, Gateway tự động gửi request `GET /internal/v1/voices` tới toàn bộ các worker đang online, tự động phân tích và gộp danh mục giọng đọc mà không cần khai báo danh sách giọng thủ công trong code hay file cấu hình.
+- **Capability / Voice-Aware Least-Active Routing**: Thuật toán cân bằng tải thông minh không chỉ đếm số request đang xử lý (`active_jobs`) mà trước tiên lọc ra danh sách các worker **có hỗ trợ đúng `voice_id` được yêu cầu** (hoặc hỗ trợ clone). Sau đó, nó mới chọn worker ít việc nhất trong nhóm thỏa mãn năng lực (kèm cơ chế xoay vòng round-robin khi hòa điểm).
 - **Hệ thống xác thực người dùng đầy đủ (`/v1/auth/*`)**: Cung cấp API đăng ký, đăng nhập email/mật khẩu, đăng nhập Google OAuth2, cấp mới JWT access/refresh token, và hồ sơ người dùng (`/v1/auth/me`).
 - **Quản lý giọng nhân bản (Instant Voice Cloning `/v1/voices/clone`)**: Cho phép người dùng thu âm hoặc tải file mẫu để nhân bản giọng đọc, kiểm soát nghiêm ngặt hạn mức 3 slot clone/người dùng, lưu trữ tệp `.wav` và `.npz` speaker embedding.
 - **Tập trung cấu hình trong `config/settings.json`**: Mọi cài đặt cổng mạng, danh sách workers, giới hạn luồng (concurrency), bộ nhớ đệm âm thanh và danh sách Client API Keys đều được lưu trong file JSON và áp dụng ngay lập tức (Hot-Reload) mà không cần khởi động lại server.
-- **Giao diện quản trị hiện đại (Dark Theme)**: Bảng điều khiển tích hợp biểu đồ Chart.js thống kê lưu lượng thời gian thực, quản lý API Key, quản lý tài khoản người dùng và trạng thái worker nodes.
-- **Tách biệt kết nối hạ tầng**: Cấu hình cơ sở dữ liệu (PostgreSQL / SQLite fallback) và Redis (quản lý blacklist token & quota counter) được khai báo qua biến môi trường.
+- **Giao diện quản trị hiện đại (Dark Theme)**: Bảng điều khiển tích hợp biểu đồ Chart.js thống kê lưu lượng thời gian thực, quản lý API Key, quản lý tài khoản người dùng và trạng thái năng lực worker nodes.
 
 ---
 
@@ -25,7 +26,7 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 | **1. Client API Key** | `settings.json` -> `client_api_keys` | `X-API-Key` | Định danh nền tảng ứng dụng (Android Mobile App, Web Client). Tiền tố `vc_live_...`. Dùng để ghi log `api_usage_logs` và phân tích lưu lượng. |
 | **2. User Bearer Token (JWT)** | Cấp động qua `/v1/auth/login` | `Authorization: Bearer <token>` | Xác thực danh tính người dùng cụ thể. Bắt buộc cho việc quản lý slot clone riêng tư (`/v1/voices/clone`), đọc hồ sơ cá nhân (`/v1/auth/me`), và tính hạn ngạch ký tự hàng ngày. |
 | **3. Management Key** (Admin Key) | `settings.json` -> `security.management_key` | `X-Management-Key` | Cấp quyền quản trị tối cao cho Web Dashboard (`/dashboard`) và các API quản trị `/v1/management/*`. |
-| **4. Upstream Worker Key** | `settings.json` -> `model_workers[].api_key` | `X-API-Key` | Gateway tự động gửi kèm khi gọi sang các node worker [vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server). |
+| **4. Upstream Worker Key** | `settings.json` -> `model_workers[].api_key` | `X-API-Key` | Gateway tự động gửi kèm khi gọi sang các node worker inference. |
 
 ---
 
@@ -55,15 +56,15 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `GET /v1/auth/me`: Lấy thông tin tài khoản, số ký tự đã dùng trong ngày, số slot clone.
 
 ### 4.2 Thư Viện Giọng Nói & Nhân Bản Giọng (`/v1/voices`)
-- `GET /v1/voices`: Lấy danh mục 23 giọng preset chuẩn VieNeu-TTS + các giọng clone riêng của user đăng nhập.
-- `GET /v1/voices/{voice_id}`: Chi tiết profile của một giọng nói.
+- `GET /v1/voices`: Lấy danh mục giọng preset động được tổng hợp từ các upstream workers + các giọng clone riêng của user đăng nhập.
+- `GET /v1/voices/{voice_id}`: Chi tiết profile của một giọng nói (preset hoặc clone).
 - `GET /v1/voices/{voice_id}/audio`: Tải file âm thanh mẫu của giọng clone (bảo vệ IDOR).
 - `POST /v1/voices/clone`: Upload file âm thanh mẫu (3-15s) để nhân bản giọng đọc mới (tối đa 3 slots).
 - `PUT /v1/voices/{voice_id}`: Cập nhật tên, phong cách, cài đặt của giọng clone.
 - `DELETE /v1/voices/{voice_id}`: Xóa giọng clone và giải phóng slot quota.
 
 ### 4.3 Tổng Hợp Âm Thanh (`/v1/audio`) & Nghe Thử
-- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (kiểm tra quota ký tự, rate limit, điều phối tới worker).
+- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (kiểm tra quota ký tự, lọc worker theo voice capability, điều phối Least-Active).
 - `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng 3s.
 
 ### 4.4 Trạng Thái Hệ Thống (`/v1/system`)
@@ -74,8 +75,8 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `GET /dashboard`: Giao diện điều khiển Web CLIProxyAPI.
 - `GET/PUT /v1/management/settings`: Đọc và cập nhật cấu hình hệ thống (Hot-Reload).
 - `GET/POST/DELETE/PATCH /v1/management/keys`: Quản lý danh sách Client API Key.
-- `GET/POST /v1/management/workers`: Danh sách và ping test các worker inference.
-- `GET/PATCH/DELETE /v1/management/users`: Quản lý tài khoản người dùng và điều chỉnh slot clone.
+- `GET/POST /v1/management/workers`: Danh sách và ping test năng lực các worker inference.
+- `GET/PATCH/DELETE /v1/management/users`: Quản trị tài khoản người dùng và điều chỉnh slot clone.
 
 ---
 
@@ -102,4 +103,4 @@ Chạy bộ kiểm thử tự động pytest:
 ```bash
 pytest tests/ -v
 ```
-Toàn bộ các test case kiểm tra auth flow, token lifecycle, hot-reload settings, PNA headers, user management và dashboard delivery.
+Toàn bộ 19 test cases kiểm tra capability load balancing, dynamic voice discovery, auth lifecycle, token blacklist, hot-reload settings, user management và dashboard delivery.

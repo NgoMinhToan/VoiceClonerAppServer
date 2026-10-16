@@ -3,7 +3,9 @@ import io
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
 import httpx
 import numpy as np
 import soundfile as sf
@@ -16,10 +18,27 @@ CIRCUIT_FAILURE_THRESHOLD = 3
 CIRCUIT_COOLDOWN_SEC = 30.0
 
 
+class WorkerCapability:
+    def __init__(
+        self,
+        worker_id: str,
+        worker_url: str,
+        supported_voices: Set[str],
+        supports_cloning: bool = True,
+        last_discovered: float = 0.0,
+    ):
+        self.worker_id = worker_id
+        self.worker_url = worker_url
+        self.supported_voices = {v.strip().lower() for v in supported_voices}
+        self.supports_cloning = supports_cloning
+        self.last_discovered = last_discovered or time.time()
+
+
 class ModelDispatcher:
     def __init__(self):
         self._lock = threading.RLock()
         self._worker_stats: Dict[str, Dict[str, Any]] = {}
+        self._worker_caps: Dict[str, WorkerCapability] = {}
         self._http_client: Optional[httpx.AsyncClient] = None
         self._round_robin_idx: int = 0
 
@@ -57,35 +76,107 @@ class ModelDispatcher:
                 stat["circuit_state"] = "open"
                 stat["probing"] = False
 
-    def _select_worker(self) -> Optional[Tuple[ModelWorkerConfig, str]]:
+    def register_worker_capabilities(
+        self,
+        worker_url: str,
+        supported_voices: Set[str],
+        supports_cloning: bool = True,
+        worker_id: str = "",
+    ):
+        """Record advertised capabilities and supported voice IDs for a worker node."""
+        with self._lock:
+            clean_url = worker_url.rstrip("/")
+            self._worker_caps[clean_url] = WorkerCapability(
+                worker_id=worker_id,
+                worker_url=clean_url,
+                supported_voices=supported_voices,
+                supports_cloning=supports_cloning,
+                last_discovered=time.time(),
+            )
+
+    def get_worker_capabilities(self, worker_url: str) -> Optional[WorkerCapability]:
+        with self._lock:
+            clean_url = worker_url.rstrip("/")
+            return self._worker_caps.get(clean_url)
+
+    def _select_worker(
+        self,
+        voice_id: Optional[str] = None,
+        is_clone: bool = False,
+    ) -> Optional[Tuple[ModelWorkerConfig, str]]:
+        """
+        Capability-Aware Least-Active Load Balancer:
+        1. Filters active workers against circuit breaker status.
+        2. Filters candidates to only those supporting voice_id (or cloning).
+        3. Selects the candidate with the fewest active jobs (with round-robin tiebreaking).
+        """
         settings = settings_manager.get_settings()
         workers = [w for w in settings.model_workers if w.is_active]
         if not workers:
             return None
 
+        clean_voice = (voice_id or "").strip().lower()
         now = time.time()
-        candidates: List[ModelWorkerConfig] = []
+
         with self._lock:
+            # 1. Check circuit breaker state
+            healthy_workers: List[ModelWorkerConfig] = []
             for w in workers:
                 stat = self._get_worker_stat(w.url)
                 if stat["circuit_state"] == "closed":
-                    candidates.append(w)
+                    healthy_workers.append(w)
                 elif stat["circuit_state"] == "open":
                     if now - stat["last_failure_time"] >= CIRCUIT_COOLDOWN_SEC:
                         stat["circuit_state"] = "half-open"
                         stat["probing"] = True
-                        candidates.append(w)
+                        healthy_workers.append(w)
                 elif stat["circuit_state"] == "half-open" and stat["probing"]:
-                    candidates.append(w)
+                    healthy_workers.append(w)
 
-            if not candidates:
+            if not healthy_workers:
                 return None
 
-            # Least-active selection
-            sorted_candidates = sorted(candidates, key=lambda w: self._get_worker_stat(w.url)["active_jobs"])
+            # 2. Filter candidates by capability
+            capable_workers: List[ModelWorkerConfig] = []
+            has_any_discovered_caps = any(w.url.rstrip("/") in self._worker_caps for w in healthy_workers)
+
+            for w in healthy_workers:
+                clean_url = w.url.rstrip("/")
+                cap = self._worker_caps.get(clean_url)
+
+                if cap is None:
+                    # Cold boot grace: if no capabilities discovered yet for this worker, consider it capable
+                    if not has_any_discovered_caps:
+                        capable_workers.append(w)
+                    continue
+
+                if is_clone:
+                    if cap.supports_cloning:
+                        capable_workers.append(w)
+                elif clean_voice:
+                    if clean_voice in cap.supported_voices:
+                        capable_workers.append(w)
+                else:
+                    capable_workers.append(w)
+
+            # If no worker advertised specific voice but capabilities were not yet discovered,
+            # fallback to all healthy workers to avoid false 503s on cold boot.
+            if not capable_workers and not has_any_discovered_caps:
+                capable_workers = healthy_workers
+
+            if not capable_workers:
+                logger.warning(
+                    f"No capable workers found for voice='{voice_id}' (is_clone={is_clone}) "
+                    f"among {len(healthy_workers)} healthy workers."
+                )
+                return None
+
+            # 3. Least-active selection on capable candidates
+            sorted_candidates = sorted(capable_workers, key=lambda w: self._get_worker_stat(w.url)["active_jobs"])
             min_active = self._get_worker_stat(sorted_candidates[0].url)["active_jobs"]
             tied = [w for w in sorted_candidates if self._get_worker_stat(w.url)["active_jobs"] == min_active]
 
+            # 4. Round-robin tiebreaker
             chosen = tied[self._round_robin_idx % len(tied)]
             self._round_robin_idx += 1
             self._get_worker_stat(chosen.url)["active_jobs"] += 1
@@ -107,12 +198,15 @@ class ModelDispatcher:
             latency_ms = (time.perf_counter() - t0) * 1000.0
             if res.status_code == 200:
                 data = res.json()
+                cap = self.get_worker_capabilities(url)
                 return {
                     "status": "online",
                     "latency_ms": round(latency_ms, 2),
                     "model_loaded": data.get("model_loaded", False),
                     "engine_mode": data.get("engine_mode", "unknown"),
                     "threads": data.get("threads", 8),
+                    "supported_voices_count": len(cap.supported_voices) if cap else data.get("total_voices", 0),
+                    "supports_cloning": cap.supports_cloning if cap else True,
                 }
             return {"status": "error", "code": res.status_code, "detail": res.text[:100]}
         except Exception as e:
@@ -134,13 +228,15 @@ class ModelDispatcher:
         ref_npz_base64: Optional[str] = None,
     ) -> Tuple[bytes, float, str]:
         """
-        Dispatch TTS synthesis to chosen worker.
+        Dispatch TTS synthesis to chosen capable worker.
         Returns: (wav_audio_bytes, execution_time_sec, worker_id)
         """
-        selection = self._select_worker()
+        is_clone = bool(ref_npz_base64 or ref_audio_path or ref_npz_path or (voice and voice.startswith("cloned_")))
+        selection = self._select_worker(voice_id=voice, is_clone=is_clone)
+
         if selection is None:
-            # Fallback mock synthesis if no workers are reachable
-            logger.info("No upstream workers available. Producing fallback 48kHz WAV audio.")
+            # Fallback mock synthesis if no capable workers are reachable
+            logger.info(f"No capable workers available for voice='{voice}'. Producing fallback 48kHz WAV audio.")
             t0 = time.perf_counter()
             duration = min(3.0, max(0.5, len(text) * 0.05 / max(0.5, speed)))
             sr = 48000
@@ -200,9 +296,10 @@ class ModelDispatcher:
     async def extract_embedding(self, audio_bytes: bytes, filename: str = "sample.wav") -> bytes:
         """
         Forward reference audio to upstream model worker to extract .npz speaker embedding.
+        Routes to workers supporting voice cloning.
         Returns: raw bytes of the .npz file.
         """
-        selection = self._select_worker()
+        selection = self._select_worker(is_clone=True)
         if selection is None:
             # Fallback mock embedding if no upstream workers available
             logger.info("No upstream workers available. Producing fallback .npz embedding.")

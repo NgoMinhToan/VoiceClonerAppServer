@@ -29,6 +29,7 @@ from VoiceClonerAppServer.core.database import init_db
 from VoiceClonerAppServer.core.redis_client import redis_client
 from VoiceClonerAppServer.core.settings_manager import settings_manager
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
+from VoiceClonerAppServer.services.voice_service import voice_service
 
 logger = logging.getLogger("VoiceClonerAppServer")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -47,6 +48,17 @@ async def lifespan(app: FastAPI):
         f"VoiceClonerAppServer running on http://{settings.server.host}:{settings.server.port} "
         f"(Workers: {len(settings.model_workers)}, Client Keys: {len(settings.client_api_keys)})"
     )
+
+    # Trigger worker capability discovery and voice aggregation on boot
+    try:
+        discovered_count = await voice_service.discover_all_workers()
+        logger.info(f"Discovered and aggregated {discovered_count} voices from upstream workers.")
+    except Exception as e:
+        logger.warning(f"Worker capability discovery notice on startup: {e}")
+
+    # Register dynamic hook when workers or settings are updated
+    settings_manager.register_on_change(lambda _: asyncio.create_task(voice_service.discover_all_workers()))
+
     yield
     logger.info("Draining connections and shutting down VoiceClonerAppServer...")
     await model_dispatcher.aclose()
