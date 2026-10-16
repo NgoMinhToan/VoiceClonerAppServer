@@ -197,6 +197,43 @@ class ModelDispatcher:
         finally:
             self._release_worker(worker_url)
 
+    async def extract_embedding(self, audio_bytes: bytes, filename: str = "sample.wav") -> bytes:
+        """
+        Forward reference audio to upstream model worker to extract .npz speaker embedding.
+        Returns: raw bytes of the .npz file.
+        """
+        selection = self._select_worker()
+        if selection is None:
+            # Fallback mock embedding if no upstream workers available
+            logger.info("No upstream workers available. Producing fallback .npz embedding.")
+            buf = io.BytesIO()
+            np.savez(buf, speaker_emb=np.zeros(192, dtype=np.float32), codes=np.zeros((1, 256), dtype=np.int64))
+            return buf.getvalue()
+
+        worker, worker_url = selection
+        client = self._get_http_client()
+        headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
+        files = {"audio_file": (filename, audio_bytes, "audio/wav")}
+
+        try:
+            resp = await client.post(
+                f"{worker_url}/internal/v1/embed",
+                files=files,
+                headers=headers,
+                timeout=60.0,
+            )
+            if resp.status_code == 200:
+                self._record_success(worker_url)
+                return resp.content
+            self._record_failure(worker_url)
+            raise RuntimeError(f"Worker {worker.id} embed returned status {resp.status_code}: {resp.text}")
+        except Exception as e:
+            self._record_failure(worker_url)
+            logger.error(f"Error extracting embedding with worker {worker.id}: {e}")
+            raise
+        finally:
+            self._release_worker(worker_url)
+
     async def aclose(self):
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()

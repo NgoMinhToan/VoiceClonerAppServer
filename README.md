@@ -1,149 +1,105 @@
 # VoiceClonerAppServer
 
-API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Lấy cảm hứng từ kiến trúc [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)).
+API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Tích hợp xác thực người dùng JWT, quản lý slot clone, và bảng điều khiển quản trị lấy cảm hứng từ [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)).
 
 ---
 
 ## 1. Tổng Quan Kiến Trúc
 
-`VoiceClonerAppServer` đóng vai trò là gateway trung gian điều phối toàn bộ luồng tổng hợp âm thanh, phân quyền và giám sát:
-- **Proxy điều phối tải**: Chuyển tiếp các yêu cầu tổng hợp âm thanh (TTS) đến các cụm worker inference [vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server) bằng thuật toán Least-Active.
+`VoiceClonerAppServer` đóng vai trò là Gateway trung tâm điều phối toàn bộ luồng hoạt động của hệ thống Voice Cloner:
+- **Proxy điều phối tải (Least-Active)**: Chuyển tiếp các yêu cầu tổng hợp âm thanh (TTS) và trích xuất embedding giọng nói đến các cụm worker inference [vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server).
+- **Hệ thống xác thực người dùng đầy đủ (`/v1/auth/*`)**: Cung cấp API đăng ký, đăng nhập email/mật khẩu, đăng nhập Google OAuth2, cấp mới JWT access/refresh token, và hồ sơ người dùng (`/v1/auth/me`).
+- **Quản lý giọng nhân bản (Instant Voice Cloning `/v1/voices/clone`)**: Cho phép người dùng thu âm hoặc tải file mẫu để nhân bản giọng đọc, kiểm soát nghiêm ngặt hạn mức 3 slot clone/người dùng, lưu trữ tệp `.wav` và `.npz` speaker embedding.
 - **Tập trung cấu hình trong `config/settings.json`**: Mọi cài đặt cổng mạng, danh sách workers, giới hạn luồng (concurrency), bộ nhớ đệm âm thanh và danh sách Client API Keys đều được lưu trong file JSON và áp dụng ngay lập tức (Hot-Reload) mà không cần khởi động lại server.
-- **Giao diện quản trị hiện đại (Dark Theme)**: Bảng điều khiển lấy cảm hứng từ CLIProxyAPI tích hợp biểu đồ Chart.js thống kê lưu lượng thời gian thực.
-- **Tách biệt kết nối hạ tầng**: Cấu hình cơ sở dữ liệu (PostgreSQL) và Redis nằm trong biến môi trường `.env`.
+- **Giao diện quản trị hiện đại (Dark Theme)**: Bảng điều khiển tích hợp biểu đồ Chart.js thống kê lưu lượng thời gian thực, quản lý API Key, quản lý tài khoản người dùng và trạng thái worker nodes.
+- **Tách biệt kết nối hạ tầng**: Cấu hình cơ sở dữ liệu (PostgreSQL / SQLite fallback) và Redis (quản lý blacklist token & quota counter) được khai báo qua biến môi trường.
 
 ---
 
-## 2. Mô Hình Bảo Mật 3 Tầng API Key
+## 2. Mô Hình Bảo Mật Kết Hợp (Client API Key + User Bearer Token + Management Key)
 
-Để tránh nhầm lẫn giữa các loại khóa trong hệ thống, `VoiceClonerAppServer` phân định rạch ròi 3 tầng API Key:
+Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định danh người dùng:
 
-| Tầng API Key | Vị trí cấu hình | Header truyền tải | Mục đích sử dụng |
+| Tầng Xác Thực | Vị trí cấu hình | Header truyền tải | Mục đích sử dụng |
 | :--- | :--- | :--- | :--- |
-| **1. Management API Key** (Admin Key) | `settings.json` -> `security.management_key` | `X-Management-Key` | Truy cập Web Dashboard (`/dashboard`) và các API quản trị `/v1/management/*`. |
-| **2. Client API Keys** (App / Web Key) | `settings.json` -> `client_api_keys` | `X-API-Key` | Định danh client (ứng dụng Android, Web Demo). Tiền tố `vc_live_...`. Dùng để kiểm soát hạn ngạch ký tự và vẽ biểu đồ thống kê. |
-| **3. Model Worker API Keys** (Upstream Key) | `settings.json` -> `model_workers[].api_key` | `X-API-Key` | Gateway tự động gửi kèm khi gọi sang các node worker [vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server). |
+| **1. Client API Key** | `settings.json` -> `client_api_keys` | `X-API-Key` | Định danh nền tảng ứng dụng (Android Mobile App, Web Client). Tiền tố `vc_live_...`. Dùng để ghi log `api_usage_logs` và phân tích lưu lượng. |
+| **2. User Bearer Token (JWT)** | Cấp động qua `/v1/auth/login` | `Authorization: Bearer <token>` | Xác thực danh tính người dùng cụ thể. Bắt buộc cho việc quản lý slot clone riêng tư (`/v1/voices/clone`), đọc hồ sơ cá nhân (`/v1/auth/me`), và tính hạn ngạch ký tự hàng ngày. |
+| **3. Management Key** (Admin Key) | `settings.json` -> `security.management_key` | `X-Management-Key` | Cấp quyền quản trị tối cao cho Web Dashboard (`/dashboard`) và các API quản trị `/v1/management/*`. |
+| **4. Upstream Worker Key** | `settings.json` -> `model_workers[].api_key` | `X-API-Key` | Gateway tự động gửi kèm khi gọi sang các node worker [vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server). |
 
 ---
 
-## 3. Cấu Trúc File `config/settings.json`
+## 3. Biến Môi Trường (Environment Variables)
 
-```json
-{
-  "server": {
-    "host": "0.0.0.0",
-    "port": 8000
-  },
-  "security": {
-    "management_key": "vc_admin_secret_key_123",
-    "require_client_api_key": true
-  },
-  "client_api_keys": [
-    {
-      "id": "key_android_app_default",
-      "name": "Android Mobile App (Production)",
-      "key": "vc_live_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
-      "is_active": true,
-      "daily_char_limit": 50000,
-      "created_at": "2026-10-15T00:00:00Z"
-    }
-  ],
-  "model_workers": [
-    {
-      "id": "worker-primary",
-      "url": "http://model-service:8001",
-      "api_key": "vtts_worker_secret_key_123",
-      "weight": 1,
-      "is_active": true
-    }
-  ],
-  "concurrency": {
-    "max_concurrent_tts": 2,
-    "max_queue_waiters": 8,
-    "daily_tts_char_limit": 100000,
-    "rate_limit_requests_per_minute": 60
-  },
-  "audio_cache": {
-    "max_size_mb": 2048,
-    "ttl_days": 7,
-    "clean_interval_sec": 3600
-  }
-}
-```
+| Biến | Mặc định | Mô tả |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | `postgresql+asyncpg://voice_user:voice_pass@db:5432/voicecloner` | URL kết nối PostgreSQL chính (tự động fallback SQLite nếu lỗi) |
+| `REDIS_URL` | `redis://redis:6379/0` | URL kết nối Redis cho quota và blacklist token (tự động fallback in-memory) |
+| `CONFIG_PATH` | `/app/VoiceClonerAppServer/config/settings.json` | Đường dẫn file cấu hình động `settings.json` |
+| `JWT_SECRET_KEY` | `dev_secret_key_...` | Khóa bí mật ký JWT tokens |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Thời gian sống của Access Token (phút) |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Thời gian sống của Refresh Token (ngày) |
+| `GOOGLE_CLIENT_ID` | `""` | Google Web Client ID cho tính năng Google Sign-In |
+| `BUSINESS_TIMEZONE` | `Asia/Ho_Chi_Minh` | Múi giờ đặt lại hạn ngạch ký tự hàng ngày (00:00 nửa đêm) |
 
 ---
 
-## 4. Hướng Dẫn Triển Khai & Khởi Chạy
+## 4. Danh Sách API Endpoints Chi Tiết
 
-### 4.1 Khởi chạy với Docker Compose (Khuyên dùng)
+### 4.1 Xác Thực & Tài Khoản Người Dùng (`/v1/auth`)
+- `POST /v1/auth/register`: Đăng ký tài khoản (body: `{email, password, full_name}`).
+- `POST /v1/auth/login`: Đăng nhập lấy access/refresh token (body: `{email, password}`).
+- `POST /v1/auth/google`: Đăng nhập Google ID token (body: `{id_token}`).
+- `POST /v1/auth/refresh`: Cấp mới token (body: `{refresh_token}`).
+- `POST /v1/auth/logout`: Đăng xuất và đưa token vào Redis blacklist.
+- `GET /v1/auth/me`: Lấy thông tin tài khoản, số ký tự đã dùng trong ngày, số slot clone.
+
+### 4.2 Thư Viện Giọng Nói & Nhân Bản Giọng (`/v1/voices`)
+- `GET /v1/voices`: Lấy danh mục 23 giọng preset chuẩn VieNeu-TTS + các giọng clone riêng của user đăng nhập.
+- `GET /v1/voices/{voice_id}`: Chi tiết profile của một giọng nói.
+- `GET /v1/voices/{voice_id}/audio`: Tải file âm thanh mẫu của giọng clone (bảo vệ IDOR).
+- `POST /v1/voices/clone`: Upload file âm thanh mẫu (3-15s) để nhân bản giọng đọc mới (tối đa 3 slots).
+- `PUT /v1/voices/{voice_id}`: Cập nhật tên, phong cách, cài đặt của giọng clone.
+- `DELETE /v1/voices/{voice_id}`: Xóa giọng clone và giải phóng slot quota.
+
+### 4.3 Tổng Hợp Âm Thanh (`/v1/audio`) & Nghe Thử
+- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (kiểm tra quota ký tự, rate limit, điều phối tới worker).
+- `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng 3s.
+
+### 4.4 Trạng Thái Hệ Thống (`/v1/system`)
+- `GET /health`: Probe kiểm tra container alive.
+- `GET /v1/system/status`: Báo cáo phần cứng, backend, số lượng worker phục vụ Android Client.
+
+### 4.5 Quản Trị Hệ Thống (`/v1/management` & `/dashboard`)
+- `GET /dashboard`: Giao diện điều khiển Web CLIProxyAPI.
+- `GET/PUT /v1/management/settings`: Đọc và cập nhật cấu hình hệ thống (Hot-Reload).
+- `GET/POST/DELETE/PATCH /v1/management/keys`: Quản lý danh sách Client API Key.
+- `GET/POST /v1/management/workers`: Danh sách và ping test các worker inference.
+- `GET/PATCH/DELETE /v1/management/users`: Quản lý tài khoản người dùng và điều chỉnh slot clone.
+
+---
+
+## 5. Hướng Dẫn Khởi Chạy
+
+### Chạy bằng Docker Compose:
 ```bash
-# 1. Sao chép biến môi trường
-cp .env.example .env
-
-# 2. Khởi chạy toàn bộ dịch vụ (PostgreSQL, Redis, AppServer)
-docker compose up -d --build
-
-# 3. Xem nhật ký hoạt động
-docker compose logs -f appserver
+docker compose up -d --build api
 ```
 
-### 4.2 Khởi chạy trực tiếp bằng Python
+### Chạy trực tiếp bằng Python:
 ```bash
-# 1. Cài đặt thư viện phụ thuộc
 pip install -r requirements.txt
-
-# 2. Khởi chạy server
 python main.py
 ```
-- Web Dashboard: `http://localhost:8000/dashboard`
-- Tài liệu Swagger: `http://localhost:8000/docs`
+- Dashboard Console: `http://localhost:8000/dashboard`
+- Swagger UI Docs: `http://localhost:8000/docs`
 
 ---
 
-## 5. Tài Liệu API Chính
+## 6. Kiểm Thử Hệ Thống
 
-### 5.1 Dành cho Client Ứng Dụng (Yêu cầu `X-API-Key`)
-- `POST /v1/audio/speech`: Tổng hợp văn bản thành âm thanh 48kHz WAV tiêu chuẩn.
-- `GET /v1/voices`: Lấy danh mục giọng đọc có sẵn.
-- `POST /v1/voices/preview`: Nghe thử giọng đọc mẫu.
-
-### 5.2 Dành cho Quản Trị (Yêu cầu `X-Management-Key`)
-- `GET /v1/management/settings`: Đọc toàn bộ cấu hình hệ thống.
-- `PUT /v1/management/settings`: Cập nhật cấu hình và Hot-Reload tức thì.
-- `GET /v1/management/keys`: Liệt kê danh sách Client API Key.
-- `POST /v1/management/keys`: Tạo mới một Client API Key.
-- `DELETE /v1/management/keys/{key_id}`: Thu hồi Client API Key.
-- `GET /v1/management/workers`: Trạng thái và độ trễ ping các worker inference.
-- `GET /v1/management/metrics/summary`: Thống kê số lượng request, ký tự và biểu đồ.
-
----
-
-## 6. Màn Hình Ứng Dụng Client (Android & Dashboard)
-
-### Giao diện Quản Trị (CLIProxyAPI Style Web Dashboard)
-Trang quản trị cho phép theo dõi biểu đồ thống kê lưu lượng theo từng Client API Key và tỷ trọng của từng Model Worker, quản lý danh sách khóa và thay đổi cấu hình trực tiếp từ trình duyệt:
+Chạy bộ kiểm thử tự động pytest:
+```bash
+pytest tests/ -v
 ```
-+--------------------------------------------------------------------------+
-|  [Voice Cloner Gateway]                     Management Key: [******]     |
-|--------------------------------------------------------------------------|
-|  [1. Metrics]    |  Total Requests: 1,420     Total Chars: 85,200        |
-|  [2. API Keys]   |  [=== Line Chart: Requests by Client Key ===]         |
-|  [3. Workers]    |  [=== Doughnut: Model Worker Distribution ===]        |
-|  [4. Settings]   |  Recent Request Logs Table...                         |
-+--------------------------------------------------------------------------+
-```
-
-### Màn Hình Android Client (`app/`)
-Ứng dụng Android kết nối trực tiếp đến `VoiceClonerAppServer` thông qua Client API Key (`vc_live_...`):
-- **Home Screen**: Giao diện nhận diện giọng nói, chọn giọng đọc Hero Card và phát tức thì.
-- **Library Screen**: Danh mục 23 giọng đọc VieNeu-TTS v3 với bộ lọc ngôn ngữ, giới tính và nghe thử 3s.
-- **Record Sample Screen**: Phòng thu âm chuẩn studio với thước đo âm lượng VU dB meter phục vụ huấn luyện Voice Clone.
-- **Voice Settings Screen**: Tinh chỉnh cao độ, tốc độ, cảm xúc và thuật toán khử nhiễu.
-
----
-
-## 7. Liên Kết Các Dự Án Liên Quan
-
-- **[vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server)**: Microservice AI xử lý inference VieNeu-TTS.
-- **[VoiceClonerWebDemo](https://github.com/NgoMinhToan/VoiceClonerWebDemo)**: Giao diện Web tĩnh thử nghiệm độc lập trên GitHub Pages.
-- **Android Client**: Thư mục `app/` tại repository chính [VoiceCloner](https://github.com/NgoMinhToan/voice-cloner-app).
+Toàn bộ các test case kiểm tra auth flow, token lifecycle, hot-reload settings, PNA headers, user management và dashboard delivery.
