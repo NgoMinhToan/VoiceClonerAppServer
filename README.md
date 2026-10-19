@@ -13,7 +13,8 @@ API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Tích hợp
 - **Hệ thống xác thực người dùng đầy đủ (`/v1/auth/*`)**: Cung cấp API đăng ký, đăng nhập email/mật khẩu, đăng nhập Google OAuth2, cấp mới JWT access/refresh token, và hồ sơ người dùng (`/v1/auth/me`).
 - **Quản lý giọng nhân bản (Instant Voice Cloning `/v1/voices/clone`)**: Cho phép người dùng thu âm hoặc tải file mẫu để nhân bản giọng đọc, kiểm soát nghiêm ngặt hạn mức 3 slot clone/người dùng, lưu trữ tệp `.wav` và `.npz` speaker embedding.
 - **Tập trung cấu hình trong `config/settings.json`**: Mọi cài đặt cổng mạng, danh sách workers, giới hạn luồng (concurrency), bộ nhớ đệm âm thanh và danh sách Client API Keys đều được lưu trong file JSON và áp dụng ngay lập tức (Hot-Reload) mà không cần khởi động lại server.
-- **Giao diện quản trị hiện đại (Dark Theme)**: Bảng điều khiển tích hợp biểu đồ Chart.js thống kê lưu lượng thời gian thực, quản lý API Key, quản lý tài khoản người dùng và trạng thái năng lực worker nodes.
+- **Giao diện quản trị hiện đại (KEEPER Dark Theme Console)**: Bảng điều khiển lấy cảm hứng từ CLIProxyAPI / KEEPER (`/dashboard`), tích hợp 6 tab chức năng tinh gọn (`Overview`, `Realtime`, `Request Events`, `Voice Workers`, `API Keys`, `Settings`), hỗ trợ rà chuột xem chỉ số chi tiết trên toàn bộ biểu đồ, sparklines và ma trận hoạt động (Activity Heatmaps & Request Health Timeline).
+
 
 ---
 
