@@ -42,4 +42,16 @@ def test_dashboard_html_contains_six_keeper_tabs():
     assert "tab-btn-analysis" not in html
     assert "tab-btn-ranking" not in html
 
+def test_dashboard_js_implements_keeper_logic():
+    from pathlib import Path
+    js_path = Path("VoiceClonerAppServer/static/dashboard/app.js")
+    if not js_path.exists():
+        js_path = Path("static/dashboard/app.js")
+    js = js_path.read_text(encoding="utf-8")
+    assert "switchKTab" in js
+    assert "initSparklines" in js
+    assert "initHeatmaps" in js
+    assert "chartTrendsMain" in js
+
+
 
