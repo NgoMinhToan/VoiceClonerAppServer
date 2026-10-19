@@ -121,43 +121,66 @@ class UsageTracker:
                     for row in by_key_res.all()
                 ]
 
-                # 3. Usage by model
-                by_model_query = (
-                    select(
-                        func.coalesce(ApiUsageLog.model_worker_id, "unknown").label("worker"),
-                        func.count(ApiUsageLog.id).label("requests"),
-                    )
-                    .where(ApiUsageLog.timestamp >= since)
-                    .group_by("worker")
-                    .order_by(desc("requests"))
-                )
-                by_model_res = await session.execute(by_model_query)
+                # 3. Usage by model: Standard model is VieNeu-TTS v3
                 usage_by_model = [
-                    {"model": row.worker, "requests": row.requests}
-                    for row in by_model_res.all()
+                    {"model": "VieNeu-TTS v3", "requests": int(total_reqs), "chars": int(total_chars)}
                 ]
 
-                # 4. Hourly trends
-                # Fetch recent logs across the window to assemble hourly buckets
-                trends_query = (
-                    select(
-                        ApiUsageLog.timestamp,
-                        func.coalesce(ApiUsageLog.model_worker_id, "unknown").label("worker"),
-                        ApiUsageLog.char_count,
-                    )
+                # 4. Synchronized 32 time buckets across the window (for heatmaps & charts)
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                window_seconds = max(1, (now - since).total_seconds())
+                bucket_duration_sec = window_seconds / 32.0
+
+                time_buckets = []
+                for i in range(32):
+                    b_start = since + timedelta(seconds=i * bucket_duration_sec)
+                    time_buckets.append({
+                        "index": i,
+                        "label": b_start.strftime("%H:%M"),
+                        "requests": 0,
+                        "success_requests": 0,
+                        "failed_requests": 0,
+                        "chars": 0,
+                        "cache_hits": 0,
+                        "avg_latency_ms": 0.0,
+                        "latency_sum": 0.0,
+                    })
+
+                all_logs_query = (
+                    select(ApiUsageLog)
                     .where(ApiUsageLog.timestamp >= since)
                     .order_by(ApiUsageLog.timestamp.asc())
                 )
-                trends_res = await session.execute(trends_query)
-                hourly_buckets: Dict[str, Dict[str, Any]] = {}
-                for row in trends_res.all():
-                    hour_key = row.timestamp.strftime("%H:00")
-                    if hour_key not in hourly_buckets:
-                        hourly_buckets[hour_key] = {"time": hour_key, "total_chars": 0, "workers": {}}
-                    hourly_buckets[hour_key]["total_chars"] += row.char_count
-                    w = row.worker
-                    hourly_buckets[hour_key]["workers"][w] = hourly_buckets[hour_key]["workers"].get(w, 0) + row.char_count
-                hourly_trends = list(hourly_buckets.values())
+                all_logs_res = await session.execute(all_logs_query)
+                for row in all_logs_res.scalars().all():
+                    offset_sec = (row.timestamp - since).total_seconds()
+                    b_idx = min(31, max(0, int(offset_sec / bucket_duration_sec)))
+                    b = time_buckets[b_idx]
+                    b["requests"] += 1
+                    b["chars"] += row.char_count
+                    b["latency_sum"] += row.latency_ms
+                    if row.status_code >= 400:
+                        b["failed_requests"] += 1
+                    else:
+                        b["success_requests"] += 1
+                    if row.latency_ms < 15.0 and row.status_code == 200:
+                        b["cache_hits"] += 1
+
+                for b in time_buckets:
+                    if b["requests"] > 0:
+                        b["avg_latency_ms"] = round(b["latency_sum"] / b["requests"], 2)
+                    del b["latency_sum"]
+
+                # Hourly trends for main chart
+                hourly_trends = [
+                    {
+                        "time": b["label"],
+                        "total_chars": b["chars"],
+                        "requests": b["requests"],
+                        "workers": {"VieNeu-TTS v3": b["chars"]},
+                    }
+                    for b in time_buckets
+                ]
 
                 # 5. Recent logs (expanded to 50 items)
                 recent_query = (
@@ -172,7 +195,7 @@ class UsageTracker:
                         "time": row.timestamp.isoformat(),
                         "key_name": row.client_key_name,
                         "endpoint": row.endpoint,
-                        "worker": row.model_worker_id,
+                        "worker": "VieNeu-TTS v3" if row.model_worker_id != "cache-hit" else "Cache Hit (SHA-256)",
                         "chars": row.char_count,
                         "latency_ms": round(row.latency_ms, 2),
                         "status": row.status_code,
@@ -189,6 +212,7 @@ class UsageTracker:
                     "average_latency_ms": round(float(avg_latency), 2),
                     "rpm": rpm,
                     "cpm": cpm,
+                    "model_name": "VieNeu-TTS v3",
                     "cache_metrics": {
                         "cache_hit_count": cache_hits,
                         "cache_miss_count": raw_reqs,
@@ -196,6 +220,7 @@ class UsageTracker:
                         "cached_chars": cached_chars,
                         "raw_chars": raw_chars,
                     },
+                    "time_buckets": time_buckets,
                     "hourly_trends": hourly_trends,
                     "usage_by_key": usage_by_key,
                     "usage_by_model": usage_by_model,
@@ -217,6 +242,37 @@ class UsageTracker:
                 cache_hit_rate = round((cache_hits / total_reqs) * 100, 2) if total_reqs > 0 else 0.0
                 minutes_window = max(1, hours * 60)
 
+                # Fallback 32 buckets
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                window_seconds = max(1, (now - since).total_seconds())
+                bucket_duration_sec = window_seconds / 32.0
+                time_buckets = []
+                for i in range(32):
+                    b_start = since + timedelta(seconds=i * bucket_duration_sec)
+                    time_buckets.append({
+                        "index": i,
+                        "label": b_start.strftime("%H:%M"),
+                        "requests": 0,
+                        "success_requests": 0,
+                        "failed_requests": 0,
+                        "chars": 0,
+                        "cache_hits": 0,
+                        "avg_latency_ms": 0.0,
+                    })
+
+                for l in logs:
+                    offset_sec = (l["timestamp"].replace(tzinfo=None) - since).total_seconds()
+                    b_idx = min(31, max(0, int(offset_sec / bucket_duration_sec)))
+                    b = time_buckets[b_idx]
+                    b["requests"] += 1
+                    b["chars"] += l.get("char_count", 0)
+                    if l.get("status_code", 200) >= 400:
+                        b["failed_requests"] += 1
+                    else:
+                        b["success_requests"] += 1
+                    if l.get("latency_ms", 0.0) < 15.0 and l.get("status_code", 200) == 200:
+                        b["cache_hits"] += 1
+
                 return {
                     "total_requests": total_reqs,
                     "failed_requests": failed_requests,
@@ -225,6 +281,7 @@ class UsageTracker:
                     "average_latency_ms": round(avg_latency, 2),
                     "rpm": round(total_reqs / minutes_window, 2),
                     "cpm": int(total_chars / minutes_window),
+                    "model_name": "VieNeu-TTS v3",
                     "cache_metrics": {
                         "cache_hit_count": cache_hits,
                         "cache_miss_count": total_reqs - cache_hits,
@@ -232,16 +289,25 @@ class UsageTracker:
                         "cached_chars": cached_chars,
                         "raw_chars": total_chars - cached_chars,
                     },
-                    "hourly_trends": [],
+                    "time_buckets": time_buckets,
+                    "hourly_trends": [
+                        {
+                            "time": b["label"],
+                            "total_chars": b["chars"],
+                            "requests": b["requests"],
+                            "workers": {"VieNeu-TTS v3": b["chars"]},
+                        }
+                        for b in time_buckets
+                    ],
                     "usage_by_key": [],
-                    "usage_by_model": [],
+                    "usage_by_model": [{"model": "VieNeu-TTS v3", "requests": total_reqs, "chars": total_chars}],
                     "recent_logs": [
                         {
                             "id": l.get("id", idx + 1),
                             "time": l["timestamp"].isoformat(),
                             "key_name": l.get("client_key_name", "Anonymous"),
                             "endpoint": l.get("endpoint", "/v1/speech/synthesize"),
-                            "worker": l.get("model_worker_id", "unknown"),
+                            "worker": "VieNeu-TTS v3",
                             "chars": l.get("char_count", 0),
                             "latency_ms": round(l.get("latency_ms", 0.0), 2),
                             "status": l.get("status_code", 200),

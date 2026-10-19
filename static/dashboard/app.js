@@ -134,6 +134,20 @@ const commonTooltipConfig = {
   boxPadding: 4,
 };
 
+// Helper to position tooltip safely within screen boundaries
+function positionTooltip(e, tooltip) {
+  const rect = e.target.getBoundingClientRect();
+  const tooltipWidth = tooltip.offsetWidth || 180;
+  let left = rect.left + window.scrollX - tooltipWidth / 2 + rect.width / 2;
+  left = Math.max(10, Math.min(left, window.innerWidth - tooltipWidth - 10));
+  let top = rect.top + window.scrollY - 45;
+  if (rect.top < 50) {
+    top = rect.bottom + window.scrollY + 8;
+  }
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
 // ── OVERVIEW TAB METRICS & CHARTS ──
 
 async function fetchMetrics() {
@@ -145,7 +159,7 @@ async function fetchMetrics() {
     const data = await res.json();
     activeMetricsData = data;
 
-    // Direct accurate calculation from server aggregates (avoids sample bias)
+    // Direct accurate calculation from server aggregates
     const totalReqs = data.total_requests ?? 0;
     const totalChars = data.total_chars ?? 0;
     const failedReqs = data.failed_requests ?? 0;
@@ -232,15 +246,6 @@ async function fetchMetrics() {
       keySelect.value = currentVal;
     }
 
-    // Populate Worker filter for Events tab
-    const eventWorkerSelect = document.getElementById('eventFilterModel');
-    if (eventWorkerSelect && data.usage_by_model) {
-      const currentWVal = eventWorkerSelect.value;
-      eventWorkerSelect.innerHTML = '<option value="all">All Workers</option>' +
-        data.usage_by_model.map(m => `<option value="${m.model}">${m.model}</option>`).join('');
-      eventWorkerSelect.value = currentWVal;
-    }
-
     renderEventsTable();
   } catch (err) {
     console.error('fetchMetrics failed', err);
@@ -254,25 +259,19 @@ function renderMetricsCharts(data) {
 }
 
 function initSparklines(data) {
-  const hoursLabels = ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
-  const totalReqs = data?.total_requests ?? 0;
-  const rpmVal = data?.rpm ?? 0.0;
-  const cpmVal = data?.cpm ?? 0;
-  const cacheRate = data?.cache_metrics?.cache_hit_rate ?? 0.0;
+  const buckets = (data?.time_buckets && data.time_buckets.length === 32)
+    ? data.time_buckets
+    : Array.from({ length: 32 }, (_, i) => ({
+        index: i,
+        label: `${String(Math.floor((i / 32) * 24)).padStart(2, '0')}:00`,
+        requests: 0,
+        chars: 0,
+        cache_hits: 0,
+      }));
 
-  let reqPoints = Array(12).fill(0);
-  let tokenPoints = Array(12).fill(0);
-
-  if (data?.hourly_trends && data.hourly_trends.length > 0) {
-    data.hourly_trends.forEach((bucket, idx) => {
-      const slot = idx % 12;
-      reqPoints[slot] += bucket.requests || 1;
-      tokenPoints[slot] += (bucket.total_chars || 0) / 1000000;
-    });
-  } else if (totalReqs > 0) {
-    reqPoints = [2, 3, 1, 4, 12, 18, 15, 22, 35, 42, 28, 15];
-    tokenPoints = [0.1, 0.2, 0.05, 0.3, 1.2, 2.5, 1.8, 3.2, 5.4, 7.8, 4.2, 2.1];
-  }
+  const timeLabels = buckets.map(b => b.label);
+  const reqPoints = buckets.map(b => b.requests);
+  const tokenPoints = buckets.map(b => Number((b.chars / 1000000).toFixed(4)));
 
   // 1. Requests Sparkline
   const ctxReq = document.getElementById('sparklineRequests');
@@ -281,7 +280,7 @@ function initSparklines(data) {
     charts.sparklineReq = new Chart(ctxReq, {
       type: 'line',
       data: {
-        labels: hoursLabels,
+        labels: timeLabels,
         datasets: [{
           data: reqPoints,
           borderColor: '#3b82f6',
@@ -290,7 +289,7 @@ function initSparklines(data) {
           pointHoverRadius: 5,
           pointHoverBackgroundColor: '#3b82f6',
           pointHoverBorderColor: '#ffffff',
-          tension: 0.4,
+          tension: 0.3,
           fill: { target: 'origin', above: 'rgba(59, 130, 246, 0.12)' },
         }],
       },
@@ -303,8 +302,8 @@ function initSparklines(data) {
           tooltip: {
             ...commonTooltipConfig,
             callbacks: {
-              title: (items) => `Mốc giờ: ${items[0].label}`,
-              label: (item) => ` Lượt requests: ${item.raw} reqs`,
+              title: (items) => `Mốc: ${items[0].label}`,
+              label: (item) => ` Requests: ${item.raw} reqs`,
             },
           },
         },
@@ -320,7 +319,7 @@ function initSparklines(data) {
     charts.sparklineToken = new Chart(ctxTokens, {
       type: 'line',
       data: {
-        labels: hoursLabels,
+        labels: timeLabels,
         datasets: [{
           data: tokenPoints,
           borderColor: '#8b5cf6',
@@ -329,7 +328,7 @@ function initSparklines(data) {
           pointHoverRadius: 5,
           pointHoverBackgroundColor: '#8b5cf6',
           pointHoverBorderColor: '#ffffff',
-          tension: 0.4,
+          tension: 0.3,
           fill: { target: 'origin', above: 'rgba(139, 92, 246, 0.12)' },
         }],
       },
@@ -342,8 +341,8 @@ function initSparklines(data) {
           tooltip: {
             ...commonTooltipConfig,
             callbacks: {
-              title: (items) => `Mốc giờ: ${items[0].label}`,
-              label: (item) => ` Khối lượng: ${Number(item.raw).toFixed(2)}M chars`,
+              title: (items) => `Mốc: ${items[0].label}`,
+              label: (item) => ` Khối lượng: ${Number(item.raw).toFixed(4)}M chars`,
             },
           },
         },
@@ -352,22 +351,26 @@ function initSparklines(data) {
     });
   }
 
-  // 3. RPM Sparkline
+  // 3. RPM Sparkline (over recent 12 buckets)
+  const recent12 = buckets.slice(-12);
+  const recentLabels = recent12.map(b => b.label);
+  const bucketMin = (24 * 60) / 32; // ~45 min per bucket
+
   const ctxRPM = document.getElementById('sparklineRPM');
   if (ctxRPM) {
     if (charts.sparklineRPM) charts.sparklineRPM.destroy();
-    const rpmData = totalReqs === 0 ? Array(5).fill(0) : [rpmVal * 0.7, rpmVal * 0.9, rpmVal * 1.1, rpmVal * 1.2, rpmVal];
+    const rpmData = recent12.map(b => Number((b.requests / bucketMin).toFixed(2)));
     charts.sparklineRPM = new Chart(ctxRPM, {
       type: 'line',
       data: {
-        labels: ['21:00', '21:15', '21:30', '21:45', '22:00'],
+        labels: recentLabels,
         datasets: [{
           data: rpmData,
           borderColor: '#10b981',
           borderWidth: 2,
           pointRadius: 0,
           pointHoverRadius: 4,
-          tension: 0.4,
+          tension: 0.3,
           fill: false,
         }],
       },
@@ -391,18 +394,18 @@ function initSparklines(data) {
   const ctxTPM = document.getElementById('sparklineTPM');
   if (ctxTPM) {
     if (charts.sparklineTPM) charts.sparklineTPM.destroy();
-    const tpmData = totalReqs === 0 ? Array(5).fill(0) : [cpmVal * 0.6, cpmVal * 0.85, cpmVal * 1.15, cpmVal * 1.05, cpmVal];
+    const tpmData = recent12.map(b => Math.round(b.chars / bucketMin));
     charts.sparklineTPM = new Chart(ctxTPM, {
       type: 'line',
       data: {
-        labels: ['21:00', '21:15', '21:30', '21:45', '22:00'],
+        labels: recentLabels,
         datasets: [{
           data: tpmData,
           borderColor: '#f97316',
           borderWidth: 2,
           pointRadius: 0,
           pointHoverRadius: 4,
-          tension: 0.4,
+          tension: 0.3,
           fill: false,
         }],
       },
@@ -426,18 +429,18 @@ function initSparklines(data) {
   const ctxCache = document.getElementById('sparklineCache');
   if (ctxCache) {
     if (charts.sparklineCache) charts.sparklineCache.destroy();
-    const cacheData = totalReqs === 0 ? Array(5).fill(0) : [91.0, 92.5, 94.0, 93.2, cacheRate];
+    const cacheData = recent12.map(b => b.requests > 0 ? Number(((b.cache_hits / b.requests) * 100).toFixed(1)) : 0);
     charts.sparklineCache = new Chart(ctxCache, {
       type: 'line',
       data: {
-        labels: ['21:00', '21:15', '21:30', '21:45', '22:00'],
+        labels: recentLabels,
         datasets: [{
           data: cacheData,
           borderColor: '#14b8a6',
           borderWidth: 2,
           pointRadius: 0,
           pointHoverRadius: 4,
-          tension: 0.4,
+          tension: 0.3,
           fill: false,
         }],
       },
@@ -461,19 +464,18 @@ function initSparklines(data) {
   const ctxCost = document.getElementById('sparklineCost');
   if (ctxCost) {
     if (charts.sparklineCost) charts.sparklineCost.destroy();
-    const costVal = Number(((data?.total_chars ?? 0) / 1000000 * 0.15).toFixed(2));
-    const costData = totalReqs === 0 ? Array(5).fill(0) : [costVal * 0.6, costVal * 0.8, costVal * 0.9, costVal * 0.95, costVal];
+    const costData = recent12.map(b => Number(((b.chars / 1000000) * 0.15).toFixed(4)));
     charts.sparklineCost = new Chart(ctxCost, {
       type: 'line',
       data: {
-        labels: ['21:00', '21:15', '21:30', '21:45', '22:00'],
+        labels: recentLabels,
         datasets: [{
           data: costData,
           borderColor: '#f59e0b',
           borderWidth: 2,
           pointRadius: 0,
           pointHoverRadius: 4,
-          tension: 0.4,
+          tension: 0.3,
           fill: false,
         }],
       },
@@ -485,27 +487,13 @@ function initSparklines(data) {
           legend: { display: false },
           tooltip: {
             ...commonTooltipConfig,
-            callbacks: { label: (i) => ` Chi phí: $${Number(i.raw).toFixed(2)}` },
+            callbacks: { label: (i) => ` Chi phí: $${Number(i.raw).toFixed(4)}` },
           },
         },
         scales: { x: { display: false }, y: { display: false } },
       },
     });
   }
-}
-
-// Helper to position tooltip safely within screen boundaries
-function positionTooltip(e, tooltip) {
-  const rect = e.target.getBoundingClientRect();
-  const tooltipWidth = tooltip.offsetWidth || 180;
-  let left = rect.left + window.scrollX - tooltipWidth / 2 + rect.width / 2;
-  left = Math.max(10, Math.min(left, window.innerWidth - tooltipWidth - 10));
-  let top = rect.top + window.scrollY - 45;
-  if (rect.top < 50) {
-    top = rect.bottom + window.scrollY + 8;
-  }
-  tooltip.style.left = `${left}px`;
-  tooltip.style.top = `${top}px`;
 }
 
 function initHeatmaps(data) {
@@ -516,34 +504,50 @@ function initHeatmaps(data) {
   const elSummary = document.getElementById('heatmapTotalSummary');
   if (elSummary) elSummary.textContent = `${totalChars.toLocaleString()} Chars`;
 
+  const buckets = (data?.time_buckets && data.time_buckets.length === 32)
+    ? data.time_buckets
+    : Array.from({ length: 32 }, (_, i) => ({
+        index: i,
+        label: `${String(Math.floor((i / 32) * 24)).padStart(2, '0')}:00`,
+        requests: 0,
+        success_requests: 0,
+        failed_requests: 0,
+        chars: 0,
+        cache_hits: 0,
+        avg_latency_ms: 0.0,
+      }));
+
+  const maxChars = Math.max(...buckets.map(b => b.chars), 1);
+
   // 1. Character Activity Heatmap (32 cols x 7 rows)
   const container1 = document.getElementById('tokenActivityHeatmap');
   if (container1) {
     container1.innerHTML = '';
     for (let col = 0; col < 32; col++) {
+      const bucket = buckets[col];
       const colEl = document.createElement('div');
       colEl.className = 'flex flex-col space-y-1';
-      const hour = Math.floor((col / 32) * 24);
+
+      // Number of active rows (1 to 7) based on real chars
+      const activeRows = bucket.requests > 0
+        ? Math.min(7, Math.max(1, Math.ceil((bucket.chars / maxChars) * 7)))
+        : 0;
+
+      const ratio = bucket.chars / maxChars;
+      let activeColor = 'bg-blue-600';
+      if (ratio > 0.6) activeColor = 'bg-blue-400';
+      else if (ratio > 0.25) activeColor = 'bg-blue-500';
+
       for (let row = 0; row < 7; row++) {
         const cell = document.createElement('div');
-        const rand = (Math.sin(col * 7 + row) + 1) / 2;
-        let color = 'bg-[#1b1c24]';
-        let chars = totalChars > 0 ? Math.floor(rand * 5000) : 0;
-        if (totalChars > 0) {
-          if (col > 18 && col < 28) {
-            if (rand > 0.6) { color = 'bg-blue-500'; chars = 250000 + Math.floor(rand * 800000); }
-            else if (rand > 0.3) { color = 'bg-blue-700'; chars = 120000 + Math.floor(rand * 150000); }
-            else if (rand > 0.1) { color = 'bg-blue-900'; chars = 40000 + Math.floor(rand * 60000); }
-          } else {
-            if (rand > 0.85) { color = 'bg-blue-600'; chars = 80000 + Math.floor(rand * 90000); }
-            else if (rand > 0.65) { color = 'bg-blue-800'; chars = 20000 + Math.floor(rand * 30000); }
-          }
-        }
+        // Bottom-up filling (row 6 is bottom, 0 is top)
+        const isCellFilled = (6 - row) < activeRows;
+        const color = isCellFilled ? activeColor : 'bg-[#181922]';
         cell.className = `heat-cell ${color}`;
 
         cell.addEventListener('mouseenter', (e) => {
           tooltip.style.display = 'block';
-          tooltip.innerHTML = `<span class="text-blue-400 font-bold">${hour}:00 - Slot ${row + 1}</span><br>Lượng ký tự: <b>${chars.toLocaleString()} chars</b>`;
+          tooltip.innerHTML = `<span class="text-blue-400 font-bold">Mốc: ${bucket.label}</span><br>Ký tự: <b>${bucket.chars.toLocaleString()} chars</b><br>Requests: <b>${bucket.requests} reqs</b>`;
           positionTooltip(e, tooltip);
         });
         cell.addEventListener('mouseleave', () => {
@@ -556,36 +560,45 @@ function initHeatmaps(data) {
     }
   }
 
-  // 2. Health Timeline Heatmap (32 cols x 7 rows)
+  // 2. Request Health Timeline Heatmap (32 cols x 7 rows - Synchronized with Token Activity)
   const container2 = document.getElementById('healthTimelineGrid');
   if (container2) {
     container2.innerHTML = '';
     for (let col = 0; col < 32; col++) {
+      const bucket = buckets[col];
       const colEl = document.createElement('div');
       colEl.className = 'flex flex-col space-y-1';
-      const hour = Math.floor((col / 32) * 24);
+
+      const hasTraffic = bucket.requests > 0;
+      const isHealthy = hasTraffic && bucket.failed_requests === 0;
+      const isDegraded = hasTraffic && bucket.failed_requests > 0;
+
+      // Match the exact same active rows as Token Activity
+      const activeRows = hasTraffic
+        ? Math.min(7, Math.max(1, Math.ceil((bucket.chars / maxChars) * 7)))
+        : 0;
+
       for (let row = 0; row < 7; row++) {
         const cell = document.createElement('div');
-        const rand = (Math.cos(col * 5 + row * 3) + 1) / 2;
-        let color = 'bg-[#1b1c24]';
-        let statusText = 'Normal';
-        let rate = '100%';
+        const isCellFilled = (6 - row) < activeRows;
+        let color = 'bg-[#181922]';
 
-        if (col === 14 || col === 18 || col === 24 || col === 28) {
-          if (rand > 0.5) { color = 'bg-emerald-500'; statusText = 'Healthy'; rate = '100% (24/24)'; }
-          else if (rand > 0.2) { color = 'bg-rose-500'; statusText = 'Failed (429 Quota Exceeded)'; rate = '45% (12/26)'; }
-          else { color = 'bg-amber-500'; statusText = 'Degraded (High Latency)'; rate = '80% (16/20)'; }
-        } else if (col > 10 && rand > 0.7) {
-          color = 'bg-emerald-500';
-          statusText = 'Healthy';
-          rate = '100% (15/15)';
+        if (isCellFilled) {
+          if (isHealthy) {
+            color = 'bg-emerald-500';
+          } else {
+            const failRatio = bucket.failed_requests / bucket.requests;
+            color = failRatio > 0.3 ? 'bg-rose-500' : 'bg-amber-500';
+          }
         }
+
         cell.className = `heat-cell ${color}`;
 
         cell.addEventListener('mouseenter', (e) => {
           tooltip.style.display = 'block';
-          const colorClass = color.includes('emerald') ? 'text-emerald-400' : (color.includes('rose') ? 'text-rose-400' : 'text-amber-400');
-          tooltip.innerHTML = `<span class="${colorClass} font-bold">${hour}:00 - ${statusText}</span><br>Tỷ lệ thành công: <b>${rate}</b>`;
+          const titleColor = isHealthy ? 'text-emerald-400' : (isDegraded ? 'text-rose-400' : 'text-slate-400');
+          const statusLabel = isHealthy ? 'Healthy (100%)' : (isDegraded ? `Có lỗi (${bucket.failed_requests} failed)` : 'Không có lưu lượng');
+          tooltip.innerHTML = `<span class="${titleColor} font-bold">Mốc: ${bucket.label} - ${statusLabel}</span><br>Thành công: <b>${bucket.success_requests}</b> | Lỗi: <b>${bucket.failed_requests}</b><br>Độ trễ TB: <b>${bucket.avg_latency_ms}ms</b>`;
           positionTooltip(e, tooltip);
         });
         cell.addEventListener('mouseleave', () => {
@@ -604,58 +617,37 @@ function initMainTrendsChart(data) {
   if (!ctx) return;
   if (charts.mainTrends) charts.mainTrends.destroy();
 
-  const timeLabels = ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
-  const modelUsage = data?.usage_by_model || [];
-  const primaryModel = modelUsage[0]?.model || 'vieneu-3.8-turbo';
-  const secondaryModel = modelUsage[1]?.model || 'vieneu-nano-fast';
-  const totalReqs = data?.total_requests ?? 0;
+  const buckets = (data?.time_buckets && data.time_buckets.length > 0)
+    ? data.time_buckets
+    : Array.from({ length: 12 }, (_, i) => ({
+        label: `${String(i * 2).padStart(2, '0')}:00`,
+        chars: 0,
+        requests: 0,
+      }));
 
-  const dataset1Data = totalReqs === 0 ? Array(12).fill(0) : [0.5, 0.4, 0.2, 1.2, 12.5, 3.8, 1.5, 2.2, 5.1, 4.3, 38.5, 15.2];
-  const dataset2Data = totalReqs === 0 ? Array(12).fill(0) : [0.1, 0.1, 0.05, 0.2, 1.8, 0.6, 0.3, 0.4, 0.9, 0.7, 4.2, 1.8];
-
-  const datasets = [
-    {
-      label: primaryModel,
-      data: dataset1Data,
-      borderColor: '#3b82f6',
-      borderWidth: 2.5,
-      pointRadius: 3,
-      pointHoverRadius: 7,
-      pointHoverBackgroundColor: '#3b82f6',
-      pointHoverBorderColor: '#ffffff',
-      pointHoverBorderWidth: 2,
-      tension: 0.4,
-      fill: true,
-      backgroundColor: 'rgba(59, 130, 246, 0.22)',
-    },
-    {
-      label: secondaryModel,
-      data: dataset2Data,
-      borderColor: '#38bdf8',
-      borderWidth: 2,
-      pointRadius: 2,
-      pointHoverRadius: 6,
-      pointHoverBackgroundColor: '#38bdf8',
-      pointHoverBorderColor: '#ffffff',
-      tension: 0.4,
-      fill: true,
-      backgroundColor: 'rgba(56, 189, 248, 0.12)',
-    },
-    {
-      label: 'voice-clone-embed',
-      data: totalReqs === 0 ? Array(12).fill(0) : [0.02, 0.01, 0.01, 0.05, 0.4, 0.1, 0.08, 0.12, 0.25, 0.18, 0.85, 0.3],
-      borderColor: '#2dd4bf',
-      borderWidth: 1.5,
-      pointRadius: 0,
-      pointHoverRadius: 5,
-      tension: 0.4,
-      fill: false,
-    },
-  ];
+  const timeLabels = buckets.map(b => b.label);
+  const totalChars = data?.total_chars ?? 0;
+  const charsData = buckets.map(b => Number((b.chars / 1000000).toFixed(4)));
 
   charts.mainTrends = new Chart(ctx, {
     type: 'line',
-    data: { labels: timeLabels, datasets },
+    data: {
+      labels: timeLabels,
+      datasets: [{
+        label: 'VieNeu-TTS v3',
+        data: charsData,
+        borderColor: '#3b82f6',
+        borderWidth: 2.5,
+        pointRadius: 3,
+        pointHoverRadius: 7,
+        pointHoverBackgroundColor: '#3b82f6',
+        pointHoverBorderColor: '#ffffff',
+        pointHoverBorderWidth: 2,
+        tension: 0.3,
+        fill: true,
+        backgroundColor: 'rgba(59, 130, 246, 0.22)',
+      }],
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -666,7 +658,7 @@ function initMainTrendsChart(data) {
           ...commonTooltipConfig,
           callbacks: {
             title: (items) => `Mốc thời gian: ${items[0].label}`,
-            label: (item) => ` ${item.dataset.label}: ${item.raw}M tokens (${Math.round(item.raw * 1000)}k chars)`,
+            label: (item) => ` ${item.dataset.label}: ${item.raw}M tokens (${Math.round(item.raw * 1000000).toLocaleString()} chars)`,
           },
         },
       },
@@ -680,37 +672,21 @@ function initMainTrendsChart(data) {
     },
   });
 
-  // Render Legend
+  // Render Legend: Only real VieNeu-TTS v3 model
   const legendContainer = document.getElementById('trendsLegendContainer');
   if (legendContainer) {
+    const formattedChars = totalChars >= 1000000
+      ? `${(totalChars / 1000000).toFixed(2)}M`
+      : (totalChars >= 1000 ? `${(totalChars / 1000).toFixed(1)}K` : `${totalChars}`);
+
     legendContainer.innerHTML = `
-      <div class="hover:bg-slate-800/30 p-2 rounded cursor-pointer transition">
-        <div class="flex items-center space-x-1.5 text-slate-300">
-          <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-          <span class="font-medium truncate">${primaryModel}</span>
+      <div class="hover:bg-slate-800/30 p-2.5 rounded-xl border border-slate-800/60 cursor-pointer transition max-w-xs">
+        <div class="flex items-center space-x-2 text-slate-200">
+          <span class="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm shadow-blue-500/50"></span>
+          <span class="font-bold text-xs tracking-tight">VieNeu-TTS v3</span>
+          <span class="px-2 py-0.5 rounded text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold">Active Model</span>
         </div>
-        <div class="mt-1 font-bold text-white mono">70.73M <span class="text-[10px] text-slate-500">100.0%</span></div>
-      </div>
-      <div class="hover:bg-slate-800/30 p-2 rounded cursor-pointer transition">
-        <div class="flex items-center space-x-1.5 text-slate-300">
-          <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
-          <span class="font-medium truncate">${secondaryModel}</span>
-        </div>
-        <div class="mt-1 font-bold text-white mono">16.37K <span class="text-[10px] text-slate-500">0.0%</span></div>
-      </div>
-      <div class="hover:bg-slate-800/30 p-2 rounded cursor-pointer transition">
-        <div class="flex items-center space-x-1.5 text-slate-300">
-          <span class="w-2.5 h-2.5 rounded-full bg-teal-400"></span>
-          <span class="font-medium truncate">voice-clone-embed</span>
-        </div>
-        <div class="mt-1 font-bold text-white mono">8.66K <span class="text-[10px] text-slate-500">0.0%</span></div>
-      </div>
-      <div class="hover:bg-slate-800/30 p-2 rounded cursor-pointer transition">
-        <div class="flex items-center space-x-1.5 text-slate-300">
-          <span class="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
-          <span class="font-medium truncate">preview-audio-cache</span>
-        </div>
-        <div class="mt-1 font-bold text-white mono">655 <span class="text-[10px] text-slate-500">0.0%</span></div>
+        <div class="mt-2 font-extrabold text-sm text-white mono">${formattedChars} <span class="text-xs text-emerald-400 font-semibold ml-1">100.0% traffic</span></div>
       </div>
     `;
   }
@@ -756,7 +732,12 @@ function fetchRealtimeMetrics() {
 }
 
 function initRealtimeCharts(data) {
-  const totalReqs = data?.total_requests ?? 0;
+  const buckets = (data?.time_buckets && data.time_buckets.length > 0) ? data.time_buckets : [];
+  const recentBuckets = buckets.slice(-8);
+  const throughputLabels = recentBuckets.length > 0 ? recentBuckets.map(b => b.label) : ['21:14', '21:22', '21:30', '21:38', '21:46', '21:54', '22:02', '22:10'];
+  const bucketMin = (24 * 60) / 32;
+  const tpmPoints = recentBuckets.length > 0 ? recentBuckets.map(b => Math.round(b.chars / bucketMin)) : Array(8).fill(0);
+  const rpmPoints = recentBuckets.length > 0 ? recentBuckets.map(b => Number((b.requests / bucketMin).toFixed(2))) : Array(8).fill(0);
 
   // 1. Throughput Dual Axis
   const ctxThroughput = document.getElementById('chartThroughput');
@@ -765,27 +746,27 @@ function initRealtimeCharts(data) {
     charts.throughput = new Chart(ctxThroughput, {
       type: 'line',
       data: {
-        labels: ['21:14', '21:22', '21:30', '21:38', '21:46', '21:54', '22:02', '22:10'],
+        labels: throughputLabels,
         datasets: [
           {
-            label: 'Tokens / Chars per min',
-            data: totalReqs === 0 ? Array(8).fill(0) : [0, 450, 720, 680, 890, 1100, 750, 380],
+            label: 'Chars per min',
+            data: tpmPoints,
             borderColor: '#3b82f6',
             borderWidth: 2.5,
             pointRadius: 3,
             pointHoverRadius: 6,
-            tension: 0.4,
+            tension: 0.3,
             yAxisID: 'y',
           },
           {
             label: 'Requests per min',
-            data: totalReqs === 0 ? Array(8).fill(0) : [0, 4, 7, 6, 8, 11, 8, 4],
+            data: rpmPoints,
             borderColor: '#f97316',
             borderWidth: 2,
             borderDash: [5, 5],
             pointRadius: 3,
             pointHoverRadius: 6,
-            tension: 0.4,
+            tension: 0.3,
             yAxisID: 'y1',
           },
         ],
@@ -799,7 +780,7 @@ function initRealtimeCharts(data) {
             ...commonTooltipConfig,
             callbacks: {
               label: (i) => i.datasetIndex === 0
-                ? ` ${i.dataset.label}: ${i.raw}K chars/min`
+                ? ` ${i.dataset.label}: ${i.raw} chars/min`
                 : ` ${i.dataset.label}: ${i.raw} reqs/min`,
             },
           },
@@ -809,7 +790,7 @@ function initRealtimeCharts(data) {
           y: {
             position: 'left',
             grid: { color: 'rgba(255, 255, 255, 0.04)' },
-            ticks: { color: '#93c5fd', callback: v => `${v}K` },
+            ticks: { color: '#93c5fd', callback: v => `${v}` },
           },
           y1: {
             position: 'right',
@@ -825,21 +806,26 @@ function initRealtimeCharts(data) {
   const ctxOutcomes = document.getElementById('chartOutcomes');
   if (ctxOutcomes) {
     if (charts.outcomes) charts.outcomes.destroy();
+    const outcomeBuckets = buckets.slice(-6);
+    const outcomeLabels = outcomeBuckets.length > 0 ? outcomeBuckets.map(b => b.label) : ['21:14', '21:24', '21:34', '21:44', '21:54', '22:04'];
+    const successPoints = outcomeBuckets.length > 0 ? outcomeBuckets.map(b => b.success_requests) : Array(6).fill(0);
+    const failedPoints = outcomeBuckets.length > 0 ? outcomeBuckets.map(b => b.failed_requests) : Array(6).fill(0);
+
     charts.outcomes = new Chart(ctxOutcomes, {
       type: 'bar',
       data: {
-        labels: ['21:14', '21:24', '21:34', '21:44', '21:54', '22:04'],
+        labels: outcomeLabels,
         datasets: [
           {
             label: 'Successful Requests',
-            data: totalReqs === 0 ? Array(6).fill(0) : [25, 28, 32, 38, 22, 18],
+            data: successPoints,
             backgroundColor: '#10b981',
             borderRadius: 4,
             stack: 'stack1',
           },
           {
             label: 'Failed Requests',
-            data: totalReqs === 0 ? Array(6).fill(0) : [5, 6, 3, 2, 4, 1],
+            data: failedPoints,
             backgroundColor: '#f43f5e',
             borderRadius: 4,
             stack: 'stack1',
@@ -871,18 +857,18 @@ function initRealtimeCharts(data) {
   const ctxComp = document.getElementById('chartComposition');
   if (ctxComp) {
     if (charts.composition) charts.composition.destroy();
-    const hitRate = Number(data?.cache_metrics?.cache_hit_rate ?? 94.0);
-    const rawRate = Number(Math.max(0, 100.0 - hitRate - 0.5).toFixed(1));
-    const audioRate = 0.5;
+    const hitRate = Number(data?.cache_metrics?.cache_hit_rate ?? 0.0);
+    const rawRate = Number(Math.max(0, 100.0 - hitRate).toFixed(1));
+    const totalReqs = data?.total_requests ?? 0;
 
     charts.composition = new Chart(ctxComp, {
       type: 'doughnut',
       data: {
-        labels: ['Cache Read (SHA-256 Hit)', 'Uncached Raw TTS Input', 'Audio Output WAV Stream'],
+        labels: ['Cache Read (SHA-256 Hit)', 'VieNeu-TTS v3 Raw Inference'],
         datasets: [{
-          data: totalReqs === 0 ? [100, 0, 0] : [hitRate, rawRate, audioRate],
-          backgroundColor: ['#f97316', '#3b82f6', '#10b981'],
-          hoverBackgroundColor: ['#ea580c', '#2563eb', '#059669'],
+          data: totalReqs === 0 ? [100, 0] : [hitRate, rawRate],
+          backgroundColor: ['#14b8a6', '#3b82f6'],
+          hoverBackgroundColor: ['#0d9488', '#2563eb'],
           borderWidth: 0,
         }],
       },
@@ -904,8 +890,8 @@ function initRealtimeCharts(data) {
           const centerLabel = document.getElementById('donutCenterLabel');
           if (elements.length > 0) {
             const idx = elements[0].index;
-            const labels = [`${hitRate}%`, `${rawRate}%`, `${audioRate}%`];
-            const subLabels = ['Cache read share', 'Uncached input', 'Audio stream'];
+            const labels = [`${hitRate}%`, `${rawRate}%`];
+            const subLabels = ['Cache read share', 'VieNeu-TTS v3 Raw'];
             if (centerVal) centerVal.textContent = labels[idx];
             if (centerLabel) centerLabel.textContent = subLabels[idx];
           } else {
@@ -953,7 +939,7 @@ function renderEventsTable() {
       <tr class="hover:bg-slate-800/40 transition">
         <td class="py-3 px-4 mono text-slate-300">${timeStr}</td>
         <td class="py-3 px-4 mono text-slate-400">${log.key_name || 'Anonymous'}</td>
-        <td class="py-3 px-4 font-semibold text-blue-400">${log.worker || 'vieneu-default'}</td>
+        <td class="py-3 px-4 font-semibold text-blue-400">${log.worker || 'VieNeu-TTS v3'}</td>
         <td class="py-3 px-4">
           <span class="px-2 py-0.5 rounded text-[11px] font-semibold border ${badgeColor}">
             ${badgeText}
