@@ -81,7 +81,6 @@ function switchKTab(tab) {
   const target = document.getElementById(`content-${tab}`);
   if (target) target.classList.remove('hidden');
 
-  // Trigger data fetch for active tab
   if (tab === 'overview') fetchMetrics();
   else if (tab === 'realtime') fetchRealtimeMetrics();
   else if (tab === 'events') renderEventsTable();
@@ -146,19 +145,20 @@ async function fetchMetrics() {
     const data = await res.json();
     activeMetricsData = data;
 
-    // Populate Top Hero Stats
-    const totalReqs = data.total_requests || 0;
-    const totalChars = data.total_chars || 0;
+    // Direct accurate calculation from server aggregates (avoids sample bias)
+    const totalReqs = data.total_requests ?? 0;
+    const totalChars = data.total_chars ?? 0;
+    const failedReqs = data.failed_requests ?? 0;
+    const successReqs = data.success_requests ?? Math.max(0, totalReqs - failedReqs);
+    const successRate = totalReqs > 0 ? ((successReqs / totalReqs) * 100).toFixed(2) : '100.00';
+
     const cacheMetrics = data.cache_metrics || {
       cache_hit_count: 0,
+      cache_miss_count: 0,
       cache_hit_rate: 0.0,
       cached_chars: 0,
       raw_chars: 0,
     };
-
-    const failedReqs = (data.recent_logs || []).filter(l => l.status >= 400).length;
-    const successReqs = Math.max(0, totalReqs - failedReqs);
-    const successRate = totalReqs > 0 ? ((successReqs / totalReqs) * 100).toFixed(2) : '100.00';
 
     const elTotalReqs = document.getElementById('valTotalReqs');
     if (elTotalReqs) elTotalReqs.textContent = totalReqs.toLocaleString();
@@ -179,44 +179,46 @@ async function fetchMetrics() {
 
     const elCachedChars = document.getElementById('valCachedChars');
     if (elCachedChars) {
-      const c = cacheMetrics.cached_chars || 0;
+      const c = cacheMetrics.cached_chars ?? 0;
       elCachedChars.textContent = c >= 1000000 ? `${(c / 1000000).toFixed(2)}M` : (c >= 1000 ? `${(c / 1000).toFixed(1)}K` : `${c}`);
     }
 
     const elRawChars = document.getElementById('valRawChars');
     if (elRawChars) {
-      const r = cacheMetrics.raw_chars || 0;
+      const r = cacheMetrics.raw_chars ?? 0;
       elRawChars.textContent = r >= 1000000 ? `${(r / 1000000).toFixed(2)}M` : (r >= 1000 ? `${(r / 1000).toFixed(1)}K` : `${r}`);
     }
 
     const elAudioDuration = document.getElementById('valAudioDuration');
     if (elAudioDuration) {
-      // Rule of thumb: ~15 chars per second = ~54,000 chars per hour
       const hoursEst = (totalChars / 54000).toFixed(1);
       elAudioDuration.textContent = `${hoursEst}h`;
     }
 
-    // Populate Secondary Small Cards
+    // Populate Secondary Small Cards with Nullish Coalescing
+    const rpmVal = data.rpm ?? 0.0;
+    const cpmVal = data.cpm ?? 0;
+    const cacheRate = cacheMetrics.cache_hit_rate ?? 0.0;
+
     const elRPM = document.getElementById('valRPM');
-    if (elRPM) elRPM.innerHTML = `${data.rpm || '0.00'} <span class="text-xs font-normal text-slate-400">req/m</span>`;
+    if (elRPM) elRPM.innerHTML = `${Number(rpmVal).toFixed(2)} <span class="text-xs font-normal text-slate-400">req/m</span>`;
 
     const elTPM = document.getElementById('valTPM');
-    if (elTPM) elTPM.innerHTML = `${(data.cpm || 0).toLocaleString()} <span class="text-xs font-normal text-slate-400">cpm</span>`;
+    if (elTPM) elTPM.innerHTML = `${Number(cpmVal).toLocaleString()} <span class="text-xs font-normal text-slate-400">cpm</span>`;
 
     const elCacheRate = document.getElementById('valCacheRate');
-    if (elCacheRate) elCacheRate.textContent = `${cacheMetrics.cache_hit_rate || 0}%`;
+    if (elCacheRate) elCacheRate.textContent = `${cacheRate}%`;
 
     const elCost = document.getElementById('valCost');
     if (elCost) {
-      // Estimated pricing: $0.15 per 1M characters
       const estCost = ((totalChars / 1000000) * 0.15).toFixed(2);
       elCost.textContent = `$${estCost}`;
     }
 
     const elSubCache = document.getElementById('valSubCache');
-    if (elSubCache) elSubCache.textContent = `Cached: ${cacheMetrics.cache_hit_count || 0} reqs • Miss: ${cacheMetrics.cache_miss_count || 0}`;
+    if (elSubCache) elSubCache.textContent = `Cached: ${cacheMetrics.cache_hit_count ?? 0} reqs • Miss: ${cacheMetrics.cache_miss_count ?? 0}`;
 
-    // Render Charts and Visuals
+    // Render Charts
     initSparklines(data);
     initHeatmaps(data);
     initMainTrendsChart(data);
@@ -253,16 +255,23 @@ function renderMetricsCharts(data) {
 
 function initSparklines(data) {
   const hoursLabels = ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
-  const totalReqs = data?.total_requests || 0;
-  const totalChars = data?.total_chars || 0;
+  const totalReqs = data?.total_requests ?? 0;
+  const rpmVal = data?.rpm ?? 0.0;
+  const cpmVal = data?.cpm ?? 0;
+  const cacheRate = data?.cache_metrics?.cache_hit_rate ?? 0.0;
 
-  // Derive points from hourly_trends if present, else graceful distribution
-  let reqPoints = [2, 3, 1, 4, 12, 18, 15, 22, 35, 42, 28, 15];
-  let tokenPoints = [0.1, 0.2, 0.05, 0.3, 1.2, 2.5, 1.8, 3.2, 5.4, 7.8, 4.2, 2.1];
+  let reqPoints = Array(12).fill(0);
+  let tokenPoints = Array(12).fill(0);
 
-  if (totalReqs === 0) {
-    reqPoints = Array(12).fill(0);
-    tokenPoints = Array(12).fill(0);
+  if (data?.hourly_trends && data.hourly_trends.length > 0) {
+    data.hourly_trends.forEach((bucket, idx) => {
+      const slot = idx % 12;
+      reqPoints[slot] += bucket.requests || 1;
+      tokenPoints[slot] += (bucket.total_chars || 0) / 1000000;
+    });
+  } else if (totalReqs > 0) {
+    reqPoints = [2, 3, 1, 4, 12, 18, 15, 22, 35, 42, 28, 15];
+    tokenPoints = [0.1, 0.2, 0.05, 0.3, 1.2, 2.5, 1.8, 3.2, 5.4, 7.8, 4.2, 2.1];
   }
 
   // 1. Requests Sparkline
@@ -334,7 +343,7 @@ function initSparklines(data) {
             ...commonTooltipConfig,
             callbacks: {
               title: (items) => `Mốc giờ: ${items[0].label}`,
-              label: (item) => ` Khối lượng: ${item.raw}M chars`,
+              label: (item) => ` Khối lượng: ${Number(item.raw).toFixed(2)}M chars`,
             },
           },
         },
@@ -347,13 +356,13 @@ function initSparklines(data) {
   const ctxRPM = document.getElementById('sparklineRPM');
   if (ctxRPM) {
     if (charts.sparklineRPM) charts.sparklineRPM.destroy();
-    const rpmVal = data?.rpm || 0.77;
+    const rpmData = totalReqs === 0 ? Array(5).fill(0) : [rpmVal * 0.7, rpmVal * 0.9, rpmVal * 1.1, rpmVal * 1.2, rpmVal];
     charts.sparklineRPM = new Chart(ctxRPM, {
       type: 'line',
       data: {
         labels: ['21:00', '21:15', '21:30', '21:45', '22:00'],
         datasets: [{
-          data: [rpmVal * 0.7, rpmVal * 0.9, rpmVal * 1.1, rpmVal * 1.2, rpmVal],
+          data: rpmData,
           borderColor: '#10b981',
           borderWidth: 2,
           pointRadius: 0,
@@ -382,13 +391,13 @@ function initSparklines(data) {
   const ctxTPM = document.getElementById('sparklineTPM');
   if (ctxTPM) {
     if (charts.sparklineTPM) charts.sparklineTPM.destroy();
-    const cpmVal = data?.cpm || 53079;
+    const tpmData = totalReqs === 0 ? Array(5).fill(0) : [cpmVal * 0.6, cpmVal * 0.85, cpmVal * 1.15, cpmVal * 1.05, cpmVal];
     charts.sparklineTPM = new Chart(ctxTPM, {
       type: 'line',
       data: {
         labels: ['21:00', '21:15', '21:30', '21:45', '22:00'],
         datasets: [{
-          data: [cpmVal * 0.6, cpmVal * 0.85, cpmVal * 1.15, cpmVal * 1.05, cpmVal],
+          data: tpmData,
           borderColor: '#f97316',
           borderWidth: 2,
           pointRadius: 0,
@@ -417,13 +426,13 @@ function initSparklines(data) {
   const ctxCache = document.getElementById('sparklineCache');
   if (ctxCache) {
     if (charts.sparklineCache) charts.sparklineCache.destroy();
-    const cacheRate = data?.cache_metrics?.cache_hit_rate || 93.68;
+    const cacheData = totalReqs === 0 ? Array(5).fill(0) : [91.0, 92.5, 94.0, 93.2, cacheRate];
     charts.sparklineCache = new Chart(ctxCache, {
       type: 'line',
       data: {
         labels: ['21:00', '21:15', '21:30', '21:45', '22:00'],
         datasets: [{
-          data: [91.0, 92.5, 94.0, 93.2, cacheRate],
+          data: cacheData,
           borderColor: '#14b8a6',
           borderWidth: 2,
           pointRadius: 0,
@@ -452,12 +461,14 @@ function initSparklines(data) {
   const ctxCost = document.getElementById('sparklineCost');
   if (ctxCost) {
     if (charts.sparklineCost) charts.sparklineCost.destroy();
+    const costVal = Number(((data?.total_chars ?? 0) / 1000000 * 0.15).toFixed(2));
+    const costData = totalReqs === 0 ? Array(5).fill(0) : [costVal * 0.6, costVal * 0.8, costVal * 0.9, costVal * 0.95, costVal];
     charts.sparklineCost = new Chart(ctxCost, {
       type: 'line',
       data: {
         labels: ['21:00', '21:15', '21:30', '21:45', '22:00'],
         datasets: [{
-          data: [6.5, 7.8, 8.9, 9.4, 10.14],
+          data: costData,
           borderColor: '#f59e0b',
           borderWidth: 2,
           pointRadius: 0,
@@ -474,7 +485,7 @@ function initSparklines(data) {
           legend: { display: false },
           tooltip: {
             ...commonTooltipConfig,
-            callbacks: { label: (i) => ` Chi phí: $${i.raw}` },
+            callbacks: { label: (i) => ` Chi phí: $${Number(i.raw).toFixed(2)}` },
           },
         },
         scales: { x: { display: false }, y: { display: false } },
@@ -483,11 +494,25 @@ function initSparklines(data) {
   }
 }
 
+// Helper to position tooltip safely within screen boundaries
+function positionTooltip(e, tooltip) {
+  const rect = e.target.getBoundingClientRect();
+  const tooltipWidth = tooltip.offsetWidth || 180;
+  let left = rect.left + window.scrollX - tooltipWidth / 2 + rect.width / 2;
+  left = Math.max(10, Math.min(left, window.innerWidth - tooltipWidth - 10));
+  let top = rect.top + window.scrollY - 45;
+  if (rect.top < 50) {
+    top = rect.bottom + window.scrollY + 8;
+  }
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
 function initHeatmaps(data) {
   const tooltip = document.getElementById('heatmapTooltip');
   if (!tooltip) return;
 
-  const totalChars = data?.total_chars || 70750000;
+  const totalChars = data?.total_chars ?? 0;
   const elSummary = document.getElementById('heatmapTotalSummary');
   if (elSummary) elSummary.textContent = `${totalChars.toLocaleString()} Chars`;
 
@@ -503,23 +528,23 @@ function initHeatmaps(data) {
         const cell = document.createElement('div');
         const rand = (Math.sin(col * 7 + row) + 1) / 2;
         let color = 'bg-[#1b1c24]';
-        let chars = Math.floor(rand * 5000);
-        if (col > 18 && col < 28) {
-          if (rand > 0.6) { color = 'bg-blue-500'; chars = 250000 + Math.floor(rand * 800000); }
-          else if (rand > 0.3) { color = 'bg-blue-700'; chars = 120000 + Math.floor(rand * 150000); }
-          else if (rand > 0.1) { color = 'bg-blue-900'; chars = 40000 + Math.floor(rand * 60000); }
-        } else {
-          if (rand > 0.85) { color = 'bg-blue-600'; chars = 80000 + Math.floor(rand * 90000); }
-          else if (rand > 0.65) { color = 'bg-blue-800'; chars = 20000 + Math.floor(rand * 30000); }
+        let chars = totalChars > 0 ? Math.floor(rand * 5000) : 0;
+        if (totalChars > 0) {
+          if (col > 18 && col < 28) {
+            if (rand > 0.6) { color = 'bg-blue-500'; chars = 250000 + Math.floor(rand * 800000); }
+            else if (rand > 0.3) { color = 'bg-blue-700'; chars = 120000 + Math.floor(rand * 150000); }
+            else if (rand > 0.1) { color = 'bg-blue-900'; chars = 40000 + Math.floor(rand * 60000); }
+          } else {
+            if (rand > 0.85) { color = 'bg-blue-600'; chars = 80000 + Math.floor(rand * 90000); }
+            else if (rand > 0.65) { color = 'bg-blue-800'; chars = 20000 + Math.floor(rand * 30000); }
+          }
         }
         cell.className = `heat-cell ${color}`;
 
         cell.addEventListener('mouseenter', (e) => {
           tooltip.style.display = 'block';
           tooltip.innerHTML = `<span class="text-blue-400 font-bold">${hour}:00 - Slot ${row + 1}</span><br>Lượng ký tự: <b>${chars.toLocaleString()} chars</b>`;
-          const rect = e.target.getBoundingClientRect();
-          tooltip.style.left = `${rect.left + window.scrollX - 40}px`;
-          tooltip.style.top = `${rect.top + window.scrollY - 45}px`;
+          positionTooltip(e, tooltip);
         });
         cell.addEventListener('mouseleave', () => {
           tooltip.style.display = 'none';
@@ -561,9 +586,7 @@ function initHeatmaps(data) {
           tooltip.style.display = 'block';
           const colorClass = color.includes('emerald') ? 'text-emerald-400' : (color.includes('rose') ? 'text-rose-400' : 'text-amber-400');
           tooltip.innerHTML = `<span class="${colorClass} font-bold">${hour}:00 - ${statusText}</span><br>Tỷ lệ thành công: <b>${rate}</b>`;
-          const rect = e.target.getBoundingClientRect();
-          tooltip.style.left = `${rect.left + window.scrollX - 50}px`;
-          tooltip.style.top = `${rect.top + window.scrollY - 45}px`;
+          positionTooltip(e, tooltip);
         });
         cell.addEventListener('mouseleave', () => {
           tooltip.style.display = 'none';
@@ -583,15 +606,17 @@ function initMainTrendsChart(data) {
 
   const timeLabels = ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
   const modelUsage = data?.usage_by_model || [];
-
-  // Determine top models from actual backend or default VieNeu workers
   const primaryModel = modelUsage[0]?.model || 'vieneu-3.8-turbo';
   const secondaryModel = modelUsage[1]?.model || 'vieneu-nano-fast';
+  const totalReqs = data?.total_requests ?? 0;
+
+  const dataset1Data = totalReqs === 0 ? Array(12).fill(0) : [0.5, 0.4, 0.2, 1.2, 12.5, 3.8, 1.5, 2.2, 5.1, 4.3, 38.5, 15.2];
+  const dataset2Data = totalReqs === 0 ? Array(12).fill(0) : [0.1, 0.1, 0.05, 0.2, 1.8, 0.6, 0.3, 0.4, 0.9, 0.7, 4.2, 1.8];
 
   const datasets = [
     {
       label: primaryModel,
-      data: [0.5, 0.4, 0.2, 1.2, 12.5, 3.8, 1.5, 2.2, 5.1, 4.3, 38.5, 15.2],
+      data: dataset1Data,
       borderColor: '#3b82f6',
       borderWidth: 2.5,
       pointRadius: 3,
@@ -605,7 +630,7 @@ function initMainTrendsChart(data) {
     },
     {
       label: secondaryModel,
-      data: [0.1, 0.1, 0.05, 0.2, 1.8, 0.6, 0.3, 0.4, 0.9, 0.7, 4.2, 1.8],
+      data: dataset2Data,
       borderColor: '#38bdf8',
       borderWidth: 2,
       pointRadius: 2,
@@ -618,7 +643,7 @@ function initMainTrendsChart(data) {
     },
     {
       label: 'voice-clone-embed',
-      data: [0.02, 0.01, 0.01, 0.05, 0.4, 0.1, 0.08, 0.12, 0.25, 0.18, 0.85, 0.3],
+      data: totalReqs === 0 ? Array(12).fill(0) : [0.02, 0.01, 0.01, 0.05, 0.4, 0.1, 0.08, 0.12, 0.25, 0.18, 0.85, 0.3],
       borderColor: '#2dd4bf',
       borderWidth: 1.5,
       pointRadius: 0,
@@ -714,16 +739,16 @@ function setRealtimeWindow(minutes) {
 
 function fetchRealtimeMetrics() {
   const data = activeMetricsData || {};
-  const totalReqs = data.total_requests || 552;
-  const totalChars = data.total_chars || 42670000;
-  const cacheMetrics = data.cache_metrics || { cache_hit_rate: 98.56 };
+  const totalReqs = data.total_requests ?? 0;
+  const totalChars = data.total_chars ?? 0;
+  const cacheMetrics = data.cache_metrics || { cache_hit_rate: 0.0 };
 
   const elReq = document.getElementById('rtRequests');
   if (elReq) elReq.textContent = totalReqs.toLocaleString();
   const elTok = document.getElementById('rtTokens');
   if (elTok) elTok.textContent = totalChars >= 1000000 ? `${(totalChars / 1000000).toFixed(2)}M` : totalChars.toLocaleString();
   const elCache = document.getElementById('rtCacheReach');
-  if (elCache) elCache.textContent = `${cacheMetrics.cache_hit_rate || 98.56}%`;
+  if (elCache) elCache.textContent = `${cacheMetrics.cache_hit_rate ?? 0}%`;
   const elCost = document.getElementById('rtCost');
   if (elCost) elCost.textContent = `$${((totalChars / 1000000) * 0.13).toFixed(2)}`;
 
@@ -731,6 +756,8 @@ function fetchRealtimeMetrics() {
 }
 
 function initRealtimeCharts(data) {
+  const totalReqs = data?.total_requests ?? 0;
+
   // 1. Throughput Dual Axis
   const ctxThroughput = document.getElementById('chartThroughput');
   if (ctxThroughput) {
@@ -742,7 +769,7 @@ function initRealtimeCharts(data) {
         datasets: [
           {
             label: 'Tokens / Chars per min',
-            data: [0, 450, 720, 680, 890, 1100, 750, 380],
+            data: totalReqs === 0 ? Array(8).fill(0) : [0, 450, 720, 680, 890, 1100, 750, 380],
             borderColor: '#3b82f6',
             borderWidth: 2.5,
             pointRadius: 3,
@@ -752,7 +779,7 @@ function initRealtimeCharts(data) {
           },
           {
             label: 'Requests per min',
-            data: [0, 4, 7, 6, 8, 11, 8, 4],
+            data: totalReqs === 0 ? Array(8).fill(0) : [0, 4, 7, 6, 8, 11, 8, 4],
             borderColor: '#f97316',
             borderWidth: 2,
             borderDash: [5, 5],
@@ -805,14 +832,14 @@ function initRealtimeCharts(data) {
         datasets: [
           {
             label: 'Successful Requests',
-            data: [25, 28, 32, 38, 22, 18],
+            data: totalReqs === 0 ? Array(6).fill(0) : [25, 28, 32, 38, 22, 18],
             backgroundColor: '#10b981',
             borderRadius: 4,
             stack: 'stack1',
           },
           {
             label: 'Failed Requests',
-            data: [5, 6, 3, 2, 4, 1],
+            data: totalReqs === 0 ? Array(6).fill(0) : [5, 6, 3, 2, 4, 1],
             backgroundColor: '#f43f5e',
             borderRadius: 4,
             stack: 'stack1',
@@ -844,12 +871,16 @@ function initRealtimeCharts(data) {
   const ctxComp = document.getElementById('chartComposition');
   if (ctxComp) {
     if (charts.composition) charts.composition.destroy();
+    const hitRate = Number(data?.cache_metrics?.cache_hit_rate ?? 94.0);
+    const rawRate = Number(Math.max(0, 100.0 - hitRate - 0.5).toFixed(1));
+    const audioRate = 0.5;
+
     charts.composition = new Chart(ctxComp, {
       type: 'doughnut',
       data: {
         labels: ['Cache Read (SHA-256 Hit)', 'Uncached Raw TTS Input', 'Audio Output WAV Stream'],
         datasets: [{
-          data: [94.0, 5.5, 0.5],
+          data: totalReqs === 0 ? [100, 0, 0] : [hitRate, rawRate, audioRate],
           backgroundColor: ['#f97316', '#3b82f6', '#10b981'],
           hoverBackgroundColor: ['#ea580c', '#2563eb', '#059669'],
           borderWidth: 0,
@@ -873,12 +904,12 @@ function initRealtimeCharts(data) {
           const centerLabel = document.getElementById('donutCenterLabel');
           if (elements.length > 0) {
             const idx = elements[0].index;
-            const labels = ['94.0%', '5.5%', '0.5%'];
+            const labels = [`${hitRate}%`, `${rawRate}%`, `${audioRate}%`];
             const subLabels = ['Cache read share', 'Uncached input', 'Audio stream'];
             if (centerVal) centerVal.textContent = labels[idx];
             if (centerLabel) centerLabel.textContent = subLabels[idx];
           } else {
-            if (centerVal) centerVal.textContent = '94.0%';
+            if (centerVal) centerVal.textContent = `${hitRate}%`;
             if (centerLabel) centerLabel.textContent = 'Cache read share';
           }
         },
@@ -1013,23 +1044,41 @@ async function fetchWorkers() {
               <span class="text-xs text-slate-500 font-mono mt-0.5 block">${w.url}</span>
             </div>
           </div>
-          <div class="flex items-center space-x-6 text-xs w-full md:w-auto justify-between md:justify-end">
-            <div class="text-right">
-              <span class="text-slate-400 block text-[11px]">Worker Status</span>
-              <span class="font-bold text-${statusColor}-400">${isOnline ? 'Ready for TTS' : 'Unreachable'}</span>
-            </div>
-            <div class="text-right">
-              <span class="text-slate-400 block text-[11px]">Trạng Thái Active</span>
-              <button onclick="toggleWorkerActive('${w.id}', ${!w.is_active})" class="px-2.5 py-1 rounded text-[11px] font-semibold transition ${w.is_active ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'}">
-                ${w.is_active ? 'Đang Bật' : 'Tạm Tắt'}
-              </button>
-            </div>
+          <div class="flex items-center space-x-3 text-xs w-full md:w-auto justify-between md:justify-end">
+            <button onclick="pingWorkerTest('${w.url}', '')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1">
+              <i class="fa-solid fa-bolt text-amber-400"></i>
+              <span>Test Ping</span>
+            </button>
+            <button onclick="toggleWorkerActive('${w.id}', ${!w.is_active})" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition ${w.is_active ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'}">
+              ${w.is_active ? 'Đang Bật' : 'Tạm Tắt'}
+            </button>
           </div>
         </div>
       `;
     }).join('');
   } catch (err) {
     console.error('fetchWorkers failed', err);
+  }
+}
+
+async function pingWorkerTest(url, apiKey) {
+  try {
+    showToast(`Đang ping kiểm tra ${url}...`, 'info');
+    const res = await apiRequest('/v1/management/workers/test', {
+      method: 'POST',
+      body: JSON.stringify({ url, api_key: apiKey || '' }),
+    });
+    if (res.ok) {
+      const ping = await res.json();
+      if (ping.status === 'online') {
+        showToast(`Worker online! Độ trễ: ${ping.latency_ms || 0}ms`, 'success');
+      } else {
+        showToast(`Worker không phản hồi: ${ping.error || 'Offline'}`, 'error');
+      }
+      fetchWorkers();
+    }
+  } catch (e) {
+    showToast('Lỗi ping worker', 'error');
   }
 }
 
@@ -1082,8 +1131,11 @@ async function fetchKeys() {
           </div>
           <span class="text-xs font-mono text-slate-400 mt-1 block">${k.key}</span>
         </div>
-        <div class="flex items-center space-x-6 text-xs">
+        <div class="flex items-center space-x-4 text-xs">
           <span class="text-slate-400">Limit: <b class="text-white">${(k.daily_char_limit || 0).toLocaleString()} chars/day</b></span>
+          <button onclick="toggleClientKey('${k.id}', ${k.is_active})" class="px-2.5 py-1 rounded text-xs transition ${k.is_active ? 'bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 border border-amber-500/30' : 'bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-500/30'}">
+            ${k.is_active ? 'Tạm Khóa' : 'Kích Hoạt'}
+          </button>
           <button onclick="revokeKey('${k.id}')" class="text-rose-400 hover:text-rose-300 transition" title="Xóa API Key">
             <i class="fa-solid fa-trash-can"></i>
           </button>
@@ -1092,6 +1144,20 @@ async function fetchKeys() {
     `).join('');
   } catch (e) {
     console.error('fetchKeys failed', e);
+  }
+}
+
+async function toggleClientKey(keyId, currentActive) {
+  try {
+    const res = await apiRequest(`/v1/management/keys/${keyId}/toggle?is_active=${!currentActive}`, {
+      method: 'PATCH',
+    });
+    if (res.ok) {
+      showToast(`Đã ${!currentActive ? 'kích hoạt' : 'tạm khóa'} API Key!`, 'success');
+      fetchKeys();
+    }
+  } catch (e) {
+    showToast('Lỗi thay đổi trạng thái API Key', 'error');
   }
 }
 
@@ -1146,14 +1212,26 @@ function fetchSettings() {
   fetchUsers();
 }
 
-function saveMgmtKeySettings() {
+async function saveMgmtKeySettings() {
   const val = document.getElementById('mgmtKeySettingsInput')?.value.trim();
   if (!val) {
     showToast('Vui lòng nhập Management Key!', 'error');
     return;
   }
-  setManagementKey(val);
-  showToast('Đã lưu Management Key thành công!', 'success');
+  try {
+    const res = await apiRequest('/v1/management/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ security: { management_key: val } }),
+    });
+    if (res.ok) {
+      setManagementKey(val);
+      showToast('Đã lưu và cập nhật Management Key trên hệ thống!', 'success');
+    } else {
+      showToast('Không thể cập nhật Management Key trên server!', 'error');
+    }
+  } catch (e) {
+    showToast('Lỗi gửi cập nhật Management Key', 'error');
+  }
 }
 
 async function fetchUsers() {
@@ -1178,14 +1256,30 @@ async function fetchUsers() {
         <td class="py-3 px-4 mono text-white">${u.max_cloned_slots || 3}</td>
         <td class="py-3 px-4 mono text-emerald-400">${(u.tts_chars_today || 0).toLocaleString()}</td>
         <td class="py-3 px-4 text-right">
-          <button onclick="openEditUserModal('${u.id}', '${u.email}', ${u.max_cloned_slots || 3})" class="text-indigo-400 hover:text-indigo-300 mr-2" title="Chỉnh sửa slot clone">
+          <button onclick="openEditUserModal('${u.id}', '${u.email}', ${u.max_cloned_slots || 3})" class="text-indigo-400 hover:text-indigo-300 mr-3" title="Chỉnh sửa slot clone">
             <i class="fa-solid fa-pen-to-square"></i>
+          </button>
+          <button onclick="deleteUserAccount('${u.id}', '${u.email}')" class="text-rose-400 hover:text-rose-300" title="Xóa tài khoản">
+            <i class="fa-solid fa-trash-can"></i>
           </button>
         </td>
       </tr>
     `).join('');
   } catch (e) {
     console.error('fetchUsers failed', e);
+  }
+}
+
+async function deleteUserAccount(userId, email) {
+  if (!confirm(`Bạn có chắc chắn muốn xóa tài khoản ${email} và toàn bộ giọng clone không?`)) return;
+  try {
+    const res = await apiRequest(`/v1/management/users/${userId}`, { method: 'DELETE' });
+    if (res.ok) {
+      showToast(`Đã xóa người dùng ${email}!`, 'success');
+      fetchUsers();
+    }
+  } catch (e) {
+    showToast('Lỗi khi xóa người dùng', 'error');
   }
 }
 

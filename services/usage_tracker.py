@@ -73,11 +73,24 @@ class UsageTracker:
                 totals_res = await session.execute(totals_query)
                 total_reqs, total_chars, avg_latency = totals_res.one()
 
-                # Cache metrics (requests with latency < 15ms are SHA-256 audio cache hits)
+                # Failed requests count in the window
+                failed_query = select(func.count(ApiUsageLog.id)).where(
+                    ApiUsageLog.timestamp >= since,
+                    ApiUsageLog.status_code >= 400,
+                )
+                failed_res = await session.execute(failed_query)
+                failed_requests = int(failed_res.scalar() or 0)
+                success_requests = max(0, int(total_reqs) - failed_requests)
+
+                # Cache metrics (requests with latency < 15ms and status == 200 are SHA-256 audio cache hits)
                 cache_hit_query = select(
                     func.count(ApiUsageLog.id),
                     func.coalesce(func.sum(ApiUsageLog.char_count), 0),
-                ).where(ApiUsageLog.timestamp >= since, ApiUsageLog.latency_ms < 15.0)
+                ).where(
+                    ApiUsageLog.timestamp >= since,
+                    ApiUsageLog.latency_ms < 15.0,
+                    ApiUsageLog.status_code == 200,
+                )
                 cache_hit_res = await session.execute(cache_hit_query)
                 cache_hits, cached_chars = cache_hit_res.one()
                 cache_hits = int(cache_hits or 0)
@@ -163,13 +176,15 @@ class UsageTracker:
                         "chars": row.char_count,
                         "latency_ms": round(row.latency_ms, 2),
                         "status": row.status_code,
-                        "is_cache_hit": row.latency_ms < 15.0,
+                        "is_cache_hit": (row.latency_ms < 15.0 and row.status_code == 200),
                     }
                     for row in recent_res.scalars().all()
                 ]
 
                 return {
                     "total_requests": int(total_reqs),
+                    "failed_requests": failed_requests,
+                    "success_requests": success_requests,
                     "total_chars": int(total_chars),
                     "average_latency_ms": round(float(avg_latency), 2),
                     "rpm": rpm,
@@ -194,13 +209,18 @@ class UsageTracker:
                 total_chars = sum(l["char_count"] for l in logs)
                 avg_latency = (sum(l["latency_ms"] for l in logs) / total_reqs) if total_reqs > 0 else 0.0
 
-                cache_hits = len([l for l in logs if l.get("latency_ms", 0.0) < 15.0])
-                cached_chars = sum(l["char_count"] for l in logs if l.get("latency_ms", 0.0) < 15.0)
+                failed_requests = len([l for l in logs if l.get("status_code", 200) >= 400])
+                success_requests = max(0, total_reqs - failed_requests)
+
+                cache_hits = len([l for l in logs if l.get("latency_ms", 0.0) < 15.0 and l.get("status_code", 200) == 200])
+                cached_chars = sum(l["char_count"] for l in logs if l.get("latency_ms", 0.0) < 15.0 and l.get("status_code", 200) == 200)
                 cache_hit_rate = round((cache_hits / total_reqs) * 100, 2) if total_reqs > 0 else 0.0
                 minutes_window = max(1, hours * 60)
 
                 return {
                     "total_requests": total_reqs,
+                    "failed_requests": failed_requests,
+                    "success_requests": success_requests,
                     "total_chars": total_chars,
                     "average_latency_ms": round(avg_latency, 2),
                     "rpm": round(total_reqs / minutes_window, 2),
@@ -216,8 +236,18 @@ class UsageTracker:
                     "usage_by_key": [],
                     "usage_by_model": [],
                     "recent_logs": [
-                        {**l, "time": l["timestamp"].isoformat(), "is_cache_hit": l.get("latency_ms", 0.0) < 15.0}
-                        for l in logs[-50:]
+                        {
+                            "id": l.get("id", idx + 1),
+                            "time": l["timestamp"].isoformat(),
+                            "key_name": l.get("client_key_name", "Anonymous"),
+                            "endpoint": l.get("endpoint", "/v1/speech/synthesize"),
+                            "worker": l.get("model_worker_id", "unknown"),
+                            "chars": l.get("char_count", 0),
+                            "latency_ms": round(l.get("latency_ms", 0.0), 2),
+                            "status": l.get("status_code", 200),
+                            "is_cache_hit": l.get("latency_ms", 0.0) < 15.0 and l.get("status_code", 200) == 200,
+                        }
+                        for idx, l in enumerate(logs[-50:])
                     ],
                 }
 

@@ -17,5 +17,15 @@ async def test_metrics_summary_contains_keeper_extended_fields():
         assert "rpm" in data
         assert "cpm" in data
         assert "recent_logs" in data
+        assert "failed_requests" in data
+        assert "success_requests" in data
         assert isinstance(data["cache_metrics"]["cache_hit_rate"], (int, float))
         assert isinstance(data["hourly_trends"], list)
+        if len(data["recent_logs"]) > 0:
+            first_log = data["recent_logs"][0]
+            assert "key_name" in first_log
+            assert "worker" in first_log
+            assert "chars" in first_log
+            assert "status" in first_log
+            assert "is_cache_hit" in first_log
+
