@@ -6,9 +6,10 @@ client = TestClient(app)
 def test_dashboard_endpoint_serves_html():
     res = client.get("/dashboard")
     assert res.status_code == 200
-    assert "Voice Cloner Management Console" in res.text
+    assert "VOICE CLONER" in res.text or "Voice Cloner" in res.text
     assert "Chart.js" in res.text or "chart.js" in res.text.lower()
     assert "X-Management-Key" in res.text or "management" in res.text.lower()
+
 
 def test_dashboard_static_assets_delivered():
     app_js = client.get("/static/dashboard/app.js")
@@ -24,4 +25,21 @@ def test_dashboard_styles_contains_keeper_classes():
     assert ".k-card" in css
     assert ".k-glow-blue" in css
     assert ".heat-cell" in css
+
+def test_dashboard_html_contains_six_keeper_tabs():
+    from pathlib import Path
+    html_path = Path("VoiceClonerAppServer/static/dashboard/index.html")
+    if not html_path.exists():
+        html_path = Path("static/dashboard/index.html")
+    html = html_path.read_text(encoding="utf-8")
+    assert "VOICE CLONER" in html
+    assert "tab-btn-overview" in html
+    assert "tab-btn-realtime" in html
+    assert "tab-btn-events" in html
+    assert "tab-btn-workers" in html
+    assert "tab-btn-keys" in html
+    assert "tab-btn-settings" in html
+    assert "tab-btn-analysis" not in html
+    assert "tab-btn-ranking" not in html
+
 

@@ -3,464 +3,629 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Voice Cloner Management Console - CLIProxyAPI Style</title>
+  <title>VOICE CLONER - AI Voice Gateway Console (KEEPER Style)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link rel="stylesheet" href="/static/dashboard/styles.css">
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex selection:bg-indigo-500 selection:text-white">
+<body class="min-h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white bg-[#0d0e12] text-slate-100">
 
-  <!-- TOAST NOTIFICATION CONTAINER -->
+  <!-- Floating Heatmap Tooltip -->
+  <div id="heatmapTooltip" class="mono"></div>
+
+  <!-- Toast Container -->
   <div id="toastContainer" class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
 
-  <!-- SIDEBAR NAVIGATION -->
-  <aside class="w-64 bg-slate-900/90 border-r border-slate-800 flex flex-col justify-between shrink-0 hidden md:flex min-h-screen">
-    <div>
-      <!-- Brand Logo -->
-      <div class="h-16 px-6 border-b border-slate-800 flex items-center space-x-3">
-        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-          <i class="fa-solid fa-server text-white text-sm"></i>
-        </div>
-        <div>
-          <h1 class="font-bold text-sm tracking-tight text-white">Voice Cloner</h1>
-          <p class="text-[10px] text-slate-400">Management Gateway</p>
-        </div>
+  <!-- TOP APP BAR -->
+  <header class="border-b border-slate-800/80 px-6 py-3.5 flex items-center justify-between bg-[#111217]/90 backdrop-blur sticky top-0 z-40">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/20">
+        <i class="fa-solid fa-wave-square text-white text-sm"></i>
       </div>
-
-      <!-- Nav Links -->
-      <nav class="p-4 space-y-1">
-        <button id="nav-btn-metrics" onclick="switchTab('metrics')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
-          <i class="fa-solid fa-chart-line text-slate-400 w-5"></i>
-          <span>1. Thống Kê & Metrics</span>
-        </button>
-        <button id="nav-btn-users" onclick="switchTab('users')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
-          <i class="fa-solid fa-users text-slate-400 w-5"></i>
-          <span>2. Quản Lý Người Dùng</span>
-        </button>
-        <button id="nav-btn-keys" onclick="switchTab('keys')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
-          <i class="fa-solid fa-key text-slate-400 w-5"></i>
-          <span>3. Client API Keys</span>
-        </button>
-        <button id="nav-btn-workers" onclick="switchTab('workers')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
-          <i class="fa-solid fa-network-wired text-slate-400 w-5"></i>
-          <span>4. Voice Model Workers</span>
-        </button>
-        <button id="nav-btn-settings" onclick="switchTab('settings')" class="sidebar-nav-item w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
-          <i class="fa-solid fa-sliders text-slate-400 w-5"></i>
-          <span>5. Cấu Hình (settings.json)</span>
-        </button>
-      </nav>
-    </div>
-
-    <!-- Sidebar Footer -->
-    <div class="p-4 border-t border-slate-800">
-      <div class="flex items-center justify-between text-xs text-slate-400">
-        <span class="flex items-center space-x-1.5">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>Gateway Active</span>
-        </span>
-        <button onclick="openAuthModal()" class="text-indigo-400 hover:text-indigo-300" title="Đổi Management Key">
-          <i class="fa-solid fa-shield-halved"></i> Key
-        </button>
+      <div class="flex items-baseline space-x-2">
+        <span class="font-extrabold tracking-wider text-base text-white">VOICE CLONER</span>
+        <span class="text-[11px] font-semibold text-slate-500 tracking-wider">KEEPER PROXY GATEWAY</span>
       </div>
     </div>
-  </aside>
 
-  <!-- MAIN CONTENT WRAPPER -->
-  <div class="flex-1 flex flex-col min-w-0">
+    <div class="flex items-center space-x-4 text-xs text-slate-400">
+      <a id="linkWebDemo" href="http://localhost:3000" target="_blank" class="hover:text-white transition flex items-center space-x-1.5 text-emerald-400">
+        <span>Mở Studio Demo</span>
+        <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+      </a>
+      <span class="text-slate-700">•</span>
+      <button onclick="openAuthModal()" class="hover:text-white flex items-center space-x-1" title="Xác thực X-Management-Key">
+        <i class="fa-solid fa-shield-halved text-indigo-400"></i>
+        <span>Management Key</span>
+      </button>
+      <span class="text-slate-700">•</span>
+      <a href="/docs" target="_blank" class="hover:text-white" title="Swagger Docs">
+        <i class="fa-solid fa-book-open"></i>
+      </a>
+    </div>
+  </header>
 
-    <!-- TOP HEADER -->
-    <header class="h-16 border-b border-slate-800 bg-slate-900/50 backdrop-blur px-6 flex items-center justify-between sticky top-0 z-40">
-      <div class="flex items-center space-x-4">
-        <span class="text-sm font-semibold text-slate-200">CLIProxyAPI Inspired Control Panel</span>
-        <span class="px-2 py-0.5 text-xs font-semibold rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Port 8000</span>
+  <!-- SECONDARY NAV BAR (6 KEEPER Tabs) -->
+  <div class="border-b border-slate-800/80 px-6 py-2.5 flex items-center justify-between bg-[#0e0f14]">
+    <div class="flex items-center space-x-1.5">
+      <button onclick="switchKTab('overview')" id="tab-btn-overview" class="k-tab-btn active">Overview</button>
+      <button onclick="switchKTab('realtime')" id="tab-btn-realtime" class="k-tab-btn">Realtime</button>
+      <button onclick="switchKTab('events')" id="tab-btn-events" class="k-tab-btn">Request Events</button>
+      <button onclick="switchKTab('workers')" id="tab-btn-workers" class="k-tab-btn">Voice Workers</button>
+      <button onclick="switchKTab('keys')" id="tab-btn-keys" class="k-tab-btn">API Keys</button>
+      <button onclick="switchKTab('settings')" id="tab-btn-settings" class="k-tab-btn">Settings</button>
+    </div>
+
+    <!-- Filter dropdowns on right -->
+    <div class="flex items-center space-x-3 text-xs">
+      <div class="flex items-center space-x-2 bg-[#171821] border border-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
+        <span class="text-slate-500">API Key:</span>
+        <select id="filterApiKey" onchange="onFilterChange()" class="bg-transparent text-slate-200 outline-none cursor-pointer text-xs">
+          <option value="all">All Keys</option>
+        </select>
       </div>
-      <div class="flex items-center space-x-3">
-        <a id="linkWebDemo" href="http://localhost:3000" target="_blank" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 transition flex items-center space-x-1.5">
-          <i class="fa-solid fa-play"></i>
-          <span>Mở Web Demo</span>
-        </a>
-        <button onclick="openAuthModal()" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1.5">
-          <i class="fa-solid fa-key text-indigo-400"></i>
-          <span>Management Key</span>
-        </button>
-        <a href="/docs" target="_blank" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center space-x-1.5 shadow-md shadow-indigo-600/20">
-          <i class="fa-solid fa-book"></i>
-          <span>Swagger API</span>
-        </a>
+      <div class="flex items-center space-x-2 bg-[#171821] border border-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
+        <span class="text-slate-500">Range:</span>
+        <select id="filterRange" onchange="onFilterChange()" class="bg-transparent text-slate-200 outline-none cursor-pointer text-xs">
+          <option value="24">Today (24h)</option>
+          <option value="48">Yesterday (48h)</option>
+          <option value="168">Last 7 Days</option>
+        </select>
       </div>
-    </header>
+      <button onclick="refreshCurrentTab()" class="w-8 h-8 rounded-lg bg-[#171821] border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition" title="Làm mới">
+        <i class="fa-solid fa-rotate-right text-xs" id="refreshIcon"></i>
+      </button>
+    </div>
+  </div>
 
-    <!-- CONTENT BODY -->
-    <main class="p-6 md:p-8 flex-1 overflow-y-auto">
+  <!-- MAIN SCROLLABLE CONTENT -->
+  <main class="flex-1 p-6 max-w-[1600px] w-full mx-auto space-y-6">
 
-      <!-- TAB 1: METRICS & ANALYTICS -->
-      <section id="tab-content-metrics" class="tab-content space-y-6">
-        <!-- 4 KPI Cards -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div class="glass-card p-5 rounded-xl">
-            <div class="flex items-center justify-between text-slate-400 text-xs font-medium mb-2">
-              <span>Tổng Số Requests (24h)</span>
-              <i class="fa-solid fa-arrow-trend-up text-indigo-400"></i>
-            </div>
-            <div id="statTotalRequests" class="text-2xl font-bold text-white tracking-tight">0</div>
-          </div>
-          <div class="glass-card p-5 rounded-xl">
-            <div class="flex items-center justify-between text-slate-400 text-xs font-medium mb-2">
-              <span>Số Ký Tự TTS Đã Xử Lý</span>
-              <i class="fa-solid fa-font text-emerald-400"></i>
-            </div>
-            <div id="statTotalChars" class="text-2xl font-bold text-white tracking-tight">0</div>
-          </div>
-          <div class="glass-card p-5 rounded-xl">
-            <div class="flex items-center justify-between text-slate-400 text-xs font-medium mb-2">
-              <span>Độ Trễ Trung Bình</span>
-              <i class="fa-solid fa-bolt text-amber-400"></i>
-            </div>
-            <div id="statAvgLatency" class="text-2xl font-bold text-white tracking-tight">0 ms</div>
-          </div>
-          <div class="glass-card p-5 rounded-xl">
-            <div class="flex items-center justify-between text-slate-400 text-xs font-medium mb-2">
-              <span>Active Keys / Workers</span>
-              <i class="fa-solid fa-shield text-violet-400"></i>
-            </div>
-            <div class="text-2xl font-bold text-white tracking-tight">
-              <span id="statActiveKeys">0</span> <span class="text-xs font-normal text-slate-400">keys</span> /
-              <span id="statActiveWorkers">0</span> <span class="text-xs font-normal text-slate-400">workers</span>
-            </div>
-          </div>
-        </div>
+    <!-- ========================================================================= -->
+    <!-- TAB 1: OVERVIEW -->
+    <!-- ========================================================================= -->
+    <div id="content-overview" class="space-y-6">
 
-        <!-- Charts Grid -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div class="glass-card p-5 rounded-xl lg:col-span-2">
-            <h3 class="text-sm font-semibold text-slate-200 mb-4 flex items-center space-x-2">
-              <i class="fa-solid fa-chart-column text-indigo-400"></i>
-              <span>Lưu Lượng Sử Dụng Theo Client API Key</span>
-            </h3>
-            <div class="h-64">
-              <canvas id="chartUsageLine"></canvas>
-            </div>
-          </div>
-          <div class="glass-card p-5 rounded-xl">
-            <h3 class="text-sm font-semibold text-slate-200 mb-4 flex items-center space-x-2">
-              <i class="fa-solid fa-pie-chart text-emerald-400"></i>
-              <span>Phân Bổ Tải Voice Model Workers</span>
-            </h3>
-            <div class="h-64 flex items-center justify-center">
-              <canvas id="chartModelDoughnut"></canvas>
-            </div>
-          </div>
-        </div>
+      <!-- TOP ROW: 2 HERO CARDS -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-        <!-- Recent Usage Logs Table -->
-        <div class="glass-card rounded-xl overflow-hidden">
-          <div class="p-4 border-b border-slate-800 flex items-center justify-between">
-            <h3 class="text-sm font-semibold text-slate-200 flex items-center space-x-2">
-              <i class="fa-solid fa-list-check text-slate-400"></i>
-              <span>Nhật Ký Yêu Cầu Gần Nhất (Recent Requests)</span>
-            </h3>
-            <button onclick="fetchMetrics()" class="text-xs text-indigo-400 hover:text-indigo-300">
-              <i class="fa-solid fa-rotate mr-1"></i> Làm mới
-            </button>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="w-full text-left">
-              <thead>
-                <tr class="border-b border-slate-800 bg-slate-900/60 text-slate-400 text-xs uppercase tracking-wider">
-                  <th class="py-3 px-3">Thời gian</th>
-                  <th class="py-3 px-3">Client Key</th>
-                  <th class="py-3 px-3">Endpoint</th>
-                  <th class="py-3 px-3">Worker Node</th>
-                  <th class="py-3 px-3">Số ký tự</th>
-                  <th class="py-3 px-3">Độ trễ</th>
-                  <th class="py-3 px-3">Mã Status</th>
-                </tr>
-              </thead>
-              <tbody id="recentLogsTableBody">
-                <tr><td colspan="7" class="text-center py-6 text-slate-500 text-xs">Đang tải...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- TAB 2: USERS MANAGEMENT -->
-      <section id="tab-content-users" class="tab-content hidden space-y-6">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-base font-bold text-white">Quản Lý Người Dùng (User Accounts)</h2>
-            <p class="text-xs text-slate-400">Danh sách tài khoản đăng ký trong cơ sở dữ liệu, quản lý số slot clone giọng và hạn mức.</p>
-          </div>
-          <button onclick="fetchUsers()" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1.5">
-            <i class="fa-solid fa-rotate"></i>
-            <span>Làm Mới</span>
-          </button>
-        </div>
-
-        <div class="glass-card rounded-xl overflow-hidden">
-          <table class="w-full text-left">
-            <thead>
-              <tr class="border-b border-slate-800 bg-slate-900/60 text-slate-400 text-xs uppercase tracking-wider">
-                <th class="py-3 px-4">Người Dùng</th>
-                <th class="py-3 px-4">Phương Thức Đăng Nhập</th>
-                <th class="py-3 px-4">Số Slot Clone (Đã Dùng / Tối Đa)</th>
-                <th class="py-3 px-4">Ký Tự TTS Hôm Nay</th>
-                <th class="py-3 px-4">Ngày Đăng Ký</th>
-                <th class="py-3 px-4 text-right">Thao Tác</th>
-              </tr>
-            </thead>
-            <tbody id="usersTableBody">
-              <tr><td colspan="6" class="text-center py-8 text-slate-500 text-sm">Đang tải danh sách người dùng...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- TAB 3: CLIENT API KEYS -->
-      <section id="tab-content-keys" class="tab-content hidden space-y-6">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-base font-bold text-white">Client API Keys (Proxy Authentication)</h2>
-            <p class="text-xs text-slate-400">Cấp phát khóa API định danh cho Android Client, Web Demo và ứng dụng bên ngoài.</p>
-          </div>
-          <button onclick="document.getElementById('modalCreateKey').classList.remove('hidden')" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition flex items-center space-x-1.5">
-            <i class="fa-solid fa-plus"></i>
-            <span>Tạo Key Mới</span>
-          </button>
-        </div>
-
-        <div class="glass-card rounded-xl overflow-hidden">
-          <table class="w-full text-left">
-            <thead>
-              <tr class="border-b border-slate-800 bg-slate-900/60 text-slate-400 text-xs uppercase tracking-wider">
-                <th class="py-3 px-4">Tên Ứng Dụng</th>
-                <th class="py-3 px-4">API Key Token</th>
-                <th class="py-3 px-4">Hạn Ngạch (Quota)</th>
-                <th class="py-3 px-4">Trạng Thái</th>
-                <th class="py-3 px-4">Ngày Tạo</th>
-                <th class="py-3 px-4 text-right">Thao Tác</th>
-              </tr>
-            </thead>
-            <tbody id="keysTableBody">
-              <tr><td colspan="6" class="text-center py-8 text-slate-500 text-sm">Đang nạp danh sách key...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- TAB 4: VOICE MODEL WORKERS -->
-      <section id="tab-content-workers" class="tab-content hidden space-y-6">
-        <div>
-          <h2 class="text-base font-bold text-white">Upstream Voice Model Inference Nodes</h2>
-          <p class="text-xs text-slate-400">Danh sách các cụm máy chủ AI chạy microservice <code class="mono text-indigo-400">vienueTTS_server</code>.</p>
-        </div>
-
-        <div class="glass-card rounded-xl overflow-hidden">
-          <table class="w-full text-left">
-            <thead>
-              <tr class="border-b border-slate-800 bg-slate-900/60 text-slate-400 text-xs uppercase tracking-wider">
-                <th class="py-3 px-4">Worker ID</th>
-                <th class="py-3 px-4">Worker Endpoint URL</th>
-                <th class="py-3 px-4">Worker API Key</th>
-                <th class="py-3 px-4">Trọng Số</th>
-                <th class="py-3 px-4">Tình Trạng (Health)</th>
-                <th class="py-3 px-4 text-right">Kiểm Tra</th>
-              </tr>
-            </thead>
-            <tbody id="workersTableBody">
-              <tr><td colspan="6" class="text-center py-8 text-slate-500 text-sm">Đang kiểm tra các worker node...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- TAB 5: SYSTEM SETTINGS (SETTINGS.JSON EDITOR) -->
-      <section id="tab-content-settings" class="tab-content hidden space-y-6">
-        <div>
-          <h2 class="text-base font-bold text-white">Cấu Hình Hệ Thống (config/settings.json)</h2>
-          <p class="text-xs text-slate-400">Mọi chỉnh sửa tại đây được lưu trực tiếp vào <code class="mono text-indigo-400">config/settings.json</code> và áp dụng tức thì (Hot-Reload).</p>
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <form onsubmit="saveSettings(event)" class="glass-card p-6 rounded-xl space-y-4">
-            <h3 class="text-sm font-semibold text-slate-200 border-b border-slate-800 pb-2">1. Cấu hình Mạng & Bảo Mật</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-xs font-medium text-slate-400 mb-1">Server Host</label>
-                <input id="cfgHost" type="text" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-400 mb-1">Server Port</label>
-                <input id="cfgPort" type="number" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-              </div>
-            </div>
-
+        <!-- Card 1: Total Requests -->
+        <div class="k-card p-5 k-glow-blue flex flex-col justify-between relative overflow-hidden">
+          <div class="flex items-start justify-between">
             <div>
-              <label class="block text-xs font-medium text-slate-400 mb-1">Management Secret Key (Admin Key)</label>
-              <input id="cfgManagementKey" type="text" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 mono focus:outline-none focus:border-indigo-500">
-            </div>
-
-            <div class="flex items-center space-x-2 pt-1">
-              <input id="cfgRequireClientKey" type="checkbox" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
-              <label for="cfgRequireClientKey" class="text-xs text-slate-300">Bắt buộc xác thực Client API Key đối với mọi request TTS</label>
-            </div>
-
-            <h3 class="text-sm font-semibold text-slate-200 border-b border-slate-800 pb-2 pt-2">2. Đồng Thời & Hạn Ngạch (Concurrency & Quota)</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-xs font-medium text-slate-400 mb-1">Max Concurrent TTS</label>
-                <input id="cfgMaxConcurrent" type="number" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+              <div class="flex items-center space-x-2">
+                <span class="text-xs font-semibold text-slate-400">Total Requests</span>
+                <span class="text-[10px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/20">Hover on chart</span>
               </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-400 mb-1">Max Queue Waiters</label>
-                <input id="cfgMaxQueue" type="number" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-400 mb-1">Daily Total Char Limit</label>
-                <input id="cfgDailyLimit" type="number" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-400 mb-1">Rate Limit (req/min)</label>
-                <input id="cfgRateLimit" type="number" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+              <div class="text-3xl font-extrabold text-white mt-2 tracking-tight mono" id="valTotalReqs">0</div>
+              <div class="flex items-center space-x-3 text-xs mt-2 font-medium">
+                <span class="flex items-center space-x-1.5 text-slate-300">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <span>Success: <b class="text-white" id="valSuccessReqs">0</b></span>
+                </span>
+                <span class="flex items-center space-x-1.5 text-slate-300">
+                  <span class="w-2 h-2 rounded-full bg-rose-400"></span>
+                  <span>Failed: <b class="text-white" id="valFailedReqs">0</b></span>
+                </span>
+                <span class="text-slate-400">Success Rate: <b class="text-emerald-400" id="valSuccessRate">100%</b></span>
               </div>
             </div>
-
-            <h3 class="text-sm font-semibold text-slate-200 border-b border-slate-800 pb-2 pt-2">3. Audio Cache Caching</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-xs font-medium text-slate-400 mb-1">Max Cache Size (MB)</label>
-                <input id="cfgCacheSize" type="number" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-400 mb-1">Cache TTL (Days)</label>
-                <input id="cfgCacheTtl" type="number" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-              </div>
+            <div class="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+              <i class="fa-solid fa-arrow-trend-up"></i>
             </div>
-
-            <div class="pt-4">
-              <button type="submit" class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center justify-center space-x-2">
-                <i class="fa-solid fa-cloud-arrow-up"></i>
-                <span>Lưu Cấu Hình & Hot-Reload Tức Thì</span>
-              </button>
-            </div>
-          </form>
-
-          <!-- Raw JSON Viewer -->
-          <div class="glass-card p-6 rounded-xl flex flex-col">
-            <h3 class="text-sm font-semibold text-slate-200 border-b border-slate-800 pb-2 mb-3 flex items-center justify-between">
-              <span>Định Dạng JSON Thực Tế Trên Đĩa</span>
-              <span class="text-[10px] text-slate-500 mono">config/settings.json</span>
-            </h3>
-            <pre id="jsonSettingsViewer" class="flex-1 bg-slate-950 p-4 rounded-lg text-slate-300 mono text-xs overflow-auto max-h-[500px]">Đang tải dữ liệu settings.json...</pre>
+          </div>
+          <div class="h-16 mt-4 w-full">
+            <canvas id="sparklineRequests"></canvas>
           </div>
         </div>
-      </section>
 
-    </main>
-  </div>
-
-  <!-- MODAL: EDIT USER CLONE SLOTS -->
-  <div id="modalEditUser" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
-    <div class="glass-card max-w-md w-full p-6 rounded-2xl border border-slate-700 space-y-4">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-        <h3 class="font-bold text-sm text-white">Chỉnh Sửa Slot Clone Giọng</h3>
-        <button onclick="document.getElementById('modalEditUser').classList.add('hidden')" class="text-slate-400 hover:text-white">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-      <input id="editUserId" type="hidden">
-      <div>
-        <label class="block text-xs font-medium text-slate-300 mb-1">Người Dùng</label>
-        <div id="editUserDisplayName" class="text-xs font-bold text-white bg-slate-900 p-2.5 rounded-lg border border-slate-800"></div>
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-slate-300 mb-1">Số Slot Clone Tối Đa (Max Cloned Slots)</label>
-        <input id="editUserSlots" type="number" min="1" max="100" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-      </div>
-      <div class="pt-2 flex justify-end space-x-2">
-        <button onclick="document.getElementById('modalEditUser').classList.add('hidden')" class="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white">Hủy</button>
-        <button onclick="saveUserEdit()" class="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white">Lưu Thay Đổi</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL: CREATE NEW CLIENT KEY -->
-  <div id="modalCreateKey" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
-    <div class="glass-card max-w-md w-full p-6 rounded-2xl border border-slate-700 space-y-4">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-        <h3 class="font-bold text-sm text-white">Tạo Client API Key Mới</h3>
-        <button onclick="document.getElementById('modalCreateKey').classList.add('hidden')" class="text-slate-400 hover:text-white">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-slate-300 mb-1">Tên Định Danh Key (App / Client Name)</label>
-        <input id="inputNewKeyName" type="text" placeholder="Ví dụ: Android-Prod-App, WebDemo" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-slate-300 mb-1">Giới Hạn Ký Tự Hàng Ngày (Daily Quota)</label>
-        <input id="inputNewKeyQuota" type="number" value="50000" class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500">
-      </div>
-      <div class="pt-2 flex justify-end space-x-2">
-        <button onclick="document.getElementById('modalCreateKey').classList.add('hidden')" class="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white">Hủy</button>
-        <button onclick="
-          const name = document.getElementById('inputNewKeyName').value.trim();
-          const quota = document.getElementById('inputNewKeyQuota').value;
-          if (name) {
-            createKey(name, quota);
-            document.getElementById('modalCreateKey').classList.add('hidden');
-          } else {
-            showToast('Vui lòng nhập tên ứng dụng', 'error');
-          }
-        " class="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white">Tạo Khóa</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL: SHOW NEWLY CREATED KEY -->
-  <div id="newKeyModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
-    <div class="glass-card max-w-md w-full p-6 rounded-2xl border border-emerald-500/30 space-y-4">
-      <div class="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto text-lg">
-        <i class="fa-solid fa-check"></i>
-      </div>
-      <div class="text-center">
-        <h3 class="font-bold text-sm text-white">Client API Key Đã Được Tạo!</h3>
-        <p class="text-xs text-slate-400 mt-1">Key cho: <strong id="newKeyDisplayName" class="text-white"></strong></p>
-      </div>
-      <div class="bg-slate-900 p-3 rounded-lg border border-slate-800">
-        <div class="flex items-center justify-between mb-1">
-          <span class="text-[10px] text-slate-400">Token Key (Chỉ hiển thị lần này):</span>
-          <button onclick="navigator.clipboard.writeText(document.getElementById('newKeyTokenVal').value); showToast('Đã sao chép vào bộ nhớ tạm!', 'success')" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold">Sao chép</button>
+        <!-- Card 2: Total Tokens / TTS Characters -->
+        <div class="k-card p-5 k-glow-purple flex flex-col justify-between relative overflow-hidden">
+          <div class="flex items-start justify-between">
+            <div>
+              <div class="flex items-center space-x-2">
+                <span class="text-xs font-semibold text-slate-400">Total Characters / Tokens</span>
+                <span class="text-[10px] bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/20">Hover on chart</span>
+              </div>
+              <div class="text-3xl font-extrabold text-white mt-2 tracking-tight mono" id="valTotalChars">0 <span class="text-sm font-normal text-slate-400">chars</span></div>
+              <div class="flex items-center space-x-3 text-xs mt-2 font-medium text-slate-300">
+                <span>Cache Read: <b class="text-purple-300" id="valCachedChars">0</b></span>
+                <span>•</span>
+                <span>Raw Inference: <b class="text-slate-400" id="valRawChars">0</b></span>
+                <span>•</span>
+                <span>Audio Est.: <b class="text-indigo-400" id="valAudioDuration">0h</b></span>
+              </div>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+              <i class="fa-solid fa-cube"></i>
+            </div>
+          </div>
+          <div class="h-16 mt-4 w-full">
+            <canvas id="sparklineTokens"></canvas>
+          </div>
         </div>
-        <input id="newKeyTokenVal" type="text" readonly class="w-full bg-transparent text-emerald-300 mono text-xs focus:outline-none">
-      </div>
-      <p class="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded border border-amber-500/20">
-        Hãy lưu lại khóa này ngay bây giờ. Bạn sẽ không thể xem lại toàn bộ chuỗi token này sau khi đóng hộp thoại.
-      </p>
-      <button onclick="closeNewKeyModal()" class="w-full py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-white transition">Đã Lưu & Đóng</button>
-    </div>
-  </div>
 
-  <!-- MODAL: AUTHENTICATE WITH MANAGEMENT KEY -->
-  <div id="authModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
-    <div class="glass-card max-w-md w-full p-6 rounded-2xl border border-slate-700 space-y-4">
+      </div>
+
+      <!-- ROW 2: 4 SMALL STAT CARDS -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+        <!-- RPM -->
+        <div class="k-card p-4 k-glow-green flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400 font-medium">RPM (Requests / Min)</span>
+            <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xs">
+              <i class="fa-regular fa-clock"></i>
+            </div>
+          </div>
+          <div class="text-2xl font-bold text-white mt-1 mono" id="valRPM">0.00 <span class="text-xs font-normal text-slate-400">req/m</span></div>
+          <span class="text-[11px] text-slate-500 mt-0.5" id="valSubRPM">Window: 24h</span>
+          <div class="h-10 mt-2">
+            <canvas id="sparklineRPM"></canvas>
+          </div>
+        </div>
+
+        <!-- TPM (CPM) -->
+        <div class="k-card p-4 k-glow-orange flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400 font-medium">TPM / CPM (Chars / Min)</span>
+            <div class="w-7 h-7 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400 text-xs">
+              <i class="fa-solid fa-chart-line"></i>
+            </div>
+          </div>
+          <div class="text-2xl font-bold text-white mt-1 mono" id="valTPM">0 <span class="text-xs font-normal text-slate-400">cpm</span></div>
+          <span class="text-[11px] text-slate-500 mt-0.5" id="valSubTPM">TTS throughput</span>
+          <div class="h-10 mt-2">
+            <canvas id="sparklineTPM"></canvas>
+          </div>
+        </div>
+
+        <!-- Cache Rate -->
+        <div class="k-card p-4 k-glow-teal flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400 font-medium">Audio Cache Rate</span>
+            <div class="w-7 h-7 rounded-lg bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400 text-xs">
+              <i class="fa-solid fa-percent"></i>
+            </div>
+          </div>
+          <div class="text-2xl font-bold text-teal-400 mt-1 mono" id="valCacheRate">0.00%</div>
+          <span class="text-[11px] text-slate-500 mt-0.5" id="valSubCache">SHA-256 Hit Quota Free</span>
+          <div class="h-10 mt-2">
+            <canvas id="sparklineCache"></canvas>
+          </div>
+        </div>
+
+        <!-- Total Cost -->
+        <div class="k-card p-4 k-glow-amber flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400 font-medium">Total Cost / Est. Value</span>
+            <div class="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-xs">
+              <i class="fa-solid fa-dollar-sign"></i>
+            </div>
+          </div>
+          <div class="text-2xl font-bold text-amber-400 mt-1 mono" id="valCost">$0.00</div>
+          <span class="text-[11px] text-slate-500 mt-0.5">Estimated Inference Value</span>
+          <div class="h-10 mt-2">
+            <canvas id="sparklineCost"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ROW 3: RECENT ACTIVITY (Activity Heatmap + Request Health Timeline) -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-slate-200">Recent Activity</h3>
+          <div class="flex items-center space-x-3 text-xs text-slate-400">
+            <span id="activityWindowLabel">Live Activity Window</span>
+            <div class="flex items-center bg-[#171821] border border-slate-800 rounded-lg p-0.5">
+              <button class="px-2.5 py-1 rounded bg-slate-800 text-white font-medium">Day</button>
+              <button class="px-2.5 py-1 text-slate-400 hover:text-white">Week</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          <!-- Token / Character Activity Heatmap -->
+          <div class="k-card p-5">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h4 class="text-xs font-bold text-white">Token / TTS Character Activity</h4>
+                <p class="text-[11px] text-slate-500 mt-0.5">Rà chuột vào từng ô vuông để xem thời gian và lượng ký tự chi tiết.</p>
+              </div>
+              <div class="text-right">
+                <span class="text-xs font-bold text-white mono" id="heatmapTotalSummary">0 Chars</span>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto pb-2">
+              <div class="flex space-x-1 min-w-[500px]" id="tokenActivityHeatmap"></div>
+            </div>
+
+            <div class="flex items-center justify-end space-x-2 text-[10px] text-slate-500 mt-3">
+              <span>Less</span>
+              <span class="heat-cell bg-slate-800"></span>
+              <span class="heat-cell bg-blue-900/60"></span>
+              <span class="heat-cell bg-blue-700/80"></span>
+              <span class="heat-cell bg-blue-500"></span>
+              <span class="heat-cell bg-blue-400"></span>
+              <span>More</span>
+            </div>
+          </div>
+
+          <!-- Request Health Timeline -->
+          <div class="k-card p-5">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h4 class="text-xs font-bold text-white">Request Health Timeline</h4>
+                <p class="text-[11px] text-slate-500 mt-0.5">Rà chuột vào ô vuông để xem tỷ lệ thành công / loại lỗi tại thời điểm đó.</p>
+              </div>
+              <div class="text-right">
+                <span class="text-xs font-bold text-emerald-400 mono" id="healthRateSummary">100%</span>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto pb-2">
+              <div class="flex space-x-1 min-w-[500px]" id="healthTimelineGrid"></div>
+            </div>
+
+            <div class="flex items-center justify-end space-x-2 text-[10px] text-slate-500 mt-3">
+              <span>Unhealthy</span>
+              <span class="heat-cell bg-rose-500"></span>
+              <span class="heat-cell bg-amber-500"></span>
+              <span class="heat-cell bg-emerald-500"></span>
+              <span>Healthy</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ROW 4: USAGE DISTRIBUTION -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-slate-200">Usage Distribution</h3>
+          <div class="flex items-center space-x-2 bg-[#171821] border border-slate-800 rounded-lg p-0.5 text-xs">
+            <button class="px-3 py-1 rounded bg-slate-800 text-white font-medium">Models (Workers)</button>
+          </div>
+        </div>
+
+        <div class="k-card p-6">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h4 class="text-xs font-bold text-white">Voice Model & Worker Trends</h4>
+              <p class="text-[11px] text-slate-500">Rà chuột vào biểu đồ để hiển thị đầy đủ thông số của các models/workers tại mốc thời gian đó.</p>
+            </div>
+          </div>
+
+          <div class="h-72 w-full">
+            <canvas id="chartTrendsMain"></canvas>
+          </div>
+
+          <!-- Legend Bar with Models & Percentages -->
+          <div id="trendsLegendContainer" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 pt-5 mt-4 border-t border-slate-800/80 text-xs"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- TAB 2: REALTIME -->
+    <!-- ========================================================================= -->
+    <div id="content-realtime" class="hidden space-y-6">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-slate-200">Realtime Metrics</h3>
+        <div class="flex items-center bg-[#171821] border border-slate-800 rounded-lg p-0.5 text-xs">
+          <button onclick="setRealtimeWindow(15)" id="rt-btn-15" class="px-2.5 py-1 text-slate-400 hover:text-white">15m</button>
+          <button onclick="setRealtimeWindow(30)" id="rt-btn-30" class="px-2.5 py-1 text-slate-400 hover:text-white">30m</button>
+          <button onclick="setRealtimeWindow(60)" id="rt-btn-60" class="px-2.5 py-1 rounded bg-slate-800 text-white font-medium">60m</button>
+        </div>
+      </div>
+
+      <!-- 4 Top Realtime Metrics -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="k-card p-4">
+          <div class="flex justify-between text-xs text-slate-400">
+            <span>Window requests</span>
+            <span class="text-slate-600" id="rtWindowLabel1">60m</span>
+          </div>
+          <div class="text-2xl font-bold text-white mt-1 mono" id="rtRequests">0</div>
+        </div>
+        <div class="k-card p-4">
+          <div class="flex justify-between text-xs text-slate-400">
+            <span>Window tokens/chars</span>
+            <span class="text-slate-600" id="rtWindowLabel2">60m</span>
+          </div>
+          <div class="text-2xl font-bold text-white mt-1 mono" id="rtTokens">0</div>
+        </div>
+        <div class="k-card p-4">
+          <div class="flex justify-between text-xs text-slate-400">
+            <span>Cache reach</span>
+            <span class="text-slate-600" id="rtWindowLabel3">60m</span>
+          </div>
+          <div class="text-2xl font-bold text-teal-400 mt-1 mono" id="rtCacheReach">0%</div>
+        </div>
+        <div class="k-card p-4">
+          <div class="flex justify-between text-xs text-slate-400">
+            <span>Window cost</span>
+            <span class="text-slate-600" id="rtWindowLabel4">60m</span>
+          </div>
+          <div class="text-2xl font-bold text-amber-400 mt-1 mono" id="rtCost">$0.00</div>
+        </div>
+      </div>
+
+      <!-- Throughput Chart (Dual Axis) with hover -->
+      <div class="k-card p-5">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h4 class="text-xs font-bold text-white">Throughput</h4>
+            <span class="text-[11px] text-slate-500">Live dual-axis tokens/min & requests/min (Hover chuột để xem chi tiết hai trục)</span>
+          </div>
+        </div>
+        <div class="h-64">
+          <canvas id="chartThroughput"></canvas>
+        </div>
+      </div>
+
+      <!-- Two column: Request Outcomes & Token Composition -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="k-card p-5">
+          <h4 class="text-xs font-bold text-white mb-3">Request Outcomes (Hover xem tỷ lệ theo bucket)</h4>
+          <div class="h-56">
+            <canvas id="chartOutcomes"></canvas>
+          </div>
+        </div>
+
+        <div class="k-card p-5 flex flex-col justify-between">
+          <h4 class="text-xs font-bold text-white mb-2">Token & Cache Composition</h4>
+          <div class="h-52 flex items-center justify-center relative">
+            <canvas id="chartComposition"></canvas>
+            <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span class="text-xl font-bold text-white mono" id="donutCenterVal">94.0%</span>
+              <span class="text-[10px] text-slate-400" id="donutCenterLabel">Cache read share</span>
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-2 text-xs text-slate-400 pt-2 border-t border-slate-800 text-center">
+            <div>● Cache Read: <b class="text-teal-400" id="donutCacheShare">94.0%</b></div>
+            <div>● Raw Input: <b class="text-blue-400" id="donutRawShare">5.5%</b></div>
+            <div>● Audio Out: <b class="text-emerald-400" id="donutAudioShare">0.5%</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- TAB 3: REQUEST EVENTS -->
+    <!-- ========================================================================= -->
+    <div id="content-events" class="hidden space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-bold text-white">Request Event Log</h3>
+          <p class="text-xs text-slate-500">Filter, inspect, and export request events.</p>
+        </div>
+        <div class="flex items-center space-x-2 text-xs">
+          <button onclick="exportEventsCsv()" class="px-3 py-1.5 bg-[#171821] border border-slate-800 rounded-lg text-slate-300 hover:text-white flex items-center space-x-1.5">
+            <i class="fa-solid fa-download"></i>
+            <span>Export CSV</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Filters Row -->
+      <div class="k-card p-3 flex flex-wrap items-center gap-3 text-xs">
+        <div class="flex items-center space-x-2 bg-[#101116] border border-slate-800 px-3 py-1.5 rounded-lg">
+          <span class="text-slate-500">Worker / Model:</span>
+          <select id="eventFilterModel" onchange="renderEventsTable()" class="bg-transparent text-slate-200 outline-none">
+            <option value="all">All Workers</option>
+          </select>
+        </div>
+        <div class="flex items-center space-x-2 bg-[#101116] border border-slate-800 px-3 py-1.5 rounded-lg">
+          <span class="text-slate-500">Status:</span>
+          <select id="eventFilterStatus" onchange="renderEventsTable()" class="bg-transparent text-slate-200 outline-none">
+            <option value="all">All Statuses</option>
+            <option value="success">Success (200)</option>
+            <option value="cache">Cache Hit</option>
+            <option value="error">Failed (4xx/5xx)</option>
+          </select>
+        </div>
+        <button onclick="clearEventFilters()" class="text-slate-500 hover:text-slate-300 ml-auto">Clear Filters</button>
+      </div>
+
+      <!-- Events Table -->
+      <div class="k-card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 bg-[#101116] text-slate-400 font-semibold">
+                <th class="py-3 px-4">Timestamp</th>
+                <th class="py-3 px-4">API Key</th>
+                <th class="py-3 px-4">Worker Node</th>
+                <th class="py-3 px-4">Result</th>
+                <th class="py-3 px-4">Endpoint</th>
+                <th class="py-3 px-4">Latency</th>
+                <th class="py-3 px-4">Chars</th>
+                <th class="py-3 px-4">Cache Hit</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60" id="eventsTableBody">
+              <tr><td colspan="8" class="text-center py-6 text-slate-500 text-xs">Đang tải dữ liệu sự kiện...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- TAB 4: VOICE WORKERS -->
+    <!-- ========================================================================= -->
+    <div id="content-workers" class="hidden space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-bold text-white">Voice Model Workers (Upstream Nodes)</h3>
+          <p class="text-xs text-slate-500">Quản lý các node VieNeu-TTS inference, đo ping latency và điều phối Least-Active Load Balancer.</p>
+        </div>
+        <div class="flex items-center space-x-2 text-xs">
+          <button onclick="fetchWorkers()" class="px-3 py-1.5 bg-[#171821] border border-slate-800 rounded-lg text-slate-300 hover:text-white">
+            <i class="fa-solid fa-rotate-right mr-1"></i> Làm mới
+          </button>
+        </div>
+      </div>
+
+      <div class="space-y-3" id="workersContainer">
+        <!-- Rendered dynamically via JS -->
+      </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- TAB 5: API KEYS -->
+    <!-- ========================================================================= -->
+    <div id="content-keys" class="hidden space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-bold text-white">Client API Keys</h3>
+          <p class="text-xs text-slate-500">Khóa truy cập cho Android App Client, Web Studio và bên thứ ba.</p>
+        </div>
+        <button onclick="openCreateKeyModal()" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center space-x-1.5 shadow-md shadow-indigo-600/20">
+          <i class="fa-solid fa-plus"></i>
+          <span>Tạo Client Key Mới</span>
+        </button>
+      </div>
+
+      <div class="k-card p-4 space-y-3" id="keysContainer">
+        <!-- Rendered dynamically via JS -->
+      </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- TAB 6: SETTINGS -->
+    <!-- ========================================================================= -->
+    <div id="content-settings" class="hidden space-y-6">
+      <div class="k-card p-5">
+        <h3 class="text-sm font-bold text-white mb-1">Session & Gateway Management</h3>
+        <p class="text-xs text-slate-500 mb-4">Cập nhật Management Key dùng để xác thực các quyền quản trị hệ thống.</p>
+        <div class="flex items-center space-x-3">
+          <input id="mgmtKeySettingsInput" type="password" value="" placeholder="Nhập Management Key mới..." class="bg-[#101116] border border-slate-800 px-3.5 py-2 rounded-lg text-xs font-mono text-slate-300 w-80 focus:outline-none focus:border-indigo-500">
+          <button onclick="saveMgmtKeySettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold">Lưu Key Quản Trị</button>
+        </div>
+      </div>
+
+      <!-- User Accounts Management -->
+      <div class="k-card p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-sm font-bold text-white">Quản Lý Tài Khoản Người Dùng (User Accounts)</h3>
+            <p class="text-xs text-slate-500">Danh sách tài khoản trong cơ sở dữ liệu, quản lý hạn mức slot clone giọng.</p>
+          </div>
+          <button onclick="fetchUsers()" class="px-3 py-1.5 bg-[#101116] border border-slate-800 rounded-lg text-xs text-slate-300 hover:text-white">
+            <i class="fa-solid fa-rotate-right mr-1"></i> Làm mới
+          </button>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400 font-semibold bg-[#101116]">
+                <th class="py-3 px-4">Email</th>
+                <th class="py-3 px-4">Họ và tên</th>
+                <th class="py-3 px-4">Provider</th>
+                <th class="py-3 px-4">Số giọng đã clone</th>
+                <th class="py-3 px-4">Hạn mức Slots</th>
+                <th class="py-3 px-4">Ký tự hôm nay</th>
+                <th class="py-3 px-4 text-right">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60" id="usersTableBody">
+              <tr><td colspan="7" class="text-center py-6 text-slate-500">Đang tải danh sách người dùng...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500 bg-[#0d0e12]">
+    <span>© 2026 VoiceCloner AI Platform • Central Management Gateway (CLIProxyAPI Inspired) • Version v1.15.9</span>
+  </footer>
+
+  <!-- MODALS -->
+
+  <!-- 1. Auth Management Key Modal -->
+  <div id="authModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-[#14151b] border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4">
       <div class="flex items-center space-x-3">
         <div class="w-9 h-9 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
-          <i class="fa-solid fa-lock"></i>
+          <i class="fa-solid fa-shield-halved"></i>
         </div>
         <div>
-          <h3 class="font-bold text-sm text-white">Xác Thực Quản Trị</h3>
-          <p class="text-xs text-slate-400">Nhập Management Key để quản lý cấu hình và API Keys</p>
+          <h3 class="font-bold text-sm text-white">Xác Thực Quản Trị (X-Management-Key)</h3>
+          <p class="text-xs text-slate-400">Nhập Management Key để quản trị hệ thống</p>
         </div>
       </div>
       <div>
-        <input id="authModalKeyInput" type="password" placeholder="Nhập Management Key..." class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white mono focus:outline-none focus:border-indigo-500">
+        <input id="authModalKeyInput" type="password" placeholder="Nhập Management Key..." class="w-full px-3 py-2 rounded-lg bg-[#101116] border border-slate-700 text-xs text-white mono focus:outline-none focus:border-indigo-500">
       </div>
       <div class="flex justify-end space-x-2 pt-2">
-        <button onclick="document.getElementById('authModal').classList.add('hidden')" class="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white">Hủy</button>
-        <button onclick="saveAuthKey()" class="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white">Xác Nhận</button>
+        <button onclick="closeAuthModal()" class="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white">Hủy</button>
+        <button onclick="saveAuthModalKey()" class="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white">Xác Nhận</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Create Client Key Modal -->
+  <div id="createKeyModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-[#14151b] border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
+          <i class="fa-solid fa-key"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-sm text-white">Tạo Client API Key Mới</h3>
+          <p class="text-xs text-slate-400">Tạo khóa truy cập tiền tố vc_live_...</p>
+        </div>
+      </div>
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="text-slate-400 block mb-1">Tên ứng dụng / Mô tả:</label>
+          <input id="newKeyNameInput" type="text" placeholder="Ví dụ: Android Client App Prod" class="w-full px-3 py-2 rounded-lg bg-[#101116] border border-slate-700 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="text-slate-400 block mb-1">Hạn mức ký tự TTS mỗi ngày:</label>
+          <input id="newKeyLimitInput" type="number" value="50000" class="w-full px-3 py-2 rounded-lg bg-[#101116] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+        </div>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeCreateKeyModal()" class="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white">Hủy</button>
+        <button onclick="submitCreateKey()" class="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white">Tạo Khóa</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Edit User Slot Modal -->
+  <div id="editUserModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-[#14151b] border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
+          <i class="fa-solid fa-user-pen"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-sm text-white">Điều Chỉnh Slot Clone Giọng</h3>
+          <p class="text-xs text-slate-400" id="editUserEmailLabel">user@example.com</p>
+        </div>
+      </div>
+      <div class="space-y-3 text-xs">
+        <input type="hidden" id="editUserIdInput">
+        <div>
+          <label class="text-slate-400 block mb-1">Số lượng slot clone giọng tối đa (1-100):</label>
+          <input id="editUserSlotsInput" type="number" min="1" max="100" class="w-full px-3 py-2 rounded-lg bg-[#101116] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+        </div>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeEditUserModal()" class="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white">Hủy</button>
+        <button onclick="submitEditUser()" class="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white">Cập Nhật</button>
       </div>
     </div>
   </div>
