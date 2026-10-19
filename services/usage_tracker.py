@@ -73,6 +73,24 @@ class UsageTracker:
                 totals_res = await session.execute(totals_query)
                 total_reqs, total_chars, avg_latency = totals_res.one()
 
+                # Cache metrics (requests with latency < 15ms are SHA-256 audio cache hits)
+                cache_hit_query = select(
+                    func.count(ApiUsageLog.id),
+                    func.coalesce(func.sum(ApiUsageLog.char_count), 0),
+                ).where(ApiUsageLog.timestamp >= since, ApiUsageLog.latency_ms < 15.0)
+                cache_hit_res = await session.execute(cache_hit_query)
+                cache_hits, cached_chars = cache_hit_res.one()
+                cache_hits = int(cache_hits or 0)
+                cached_chars = int(cached_chars or 0)
+                raw_reqs = max(0, int(total_reqs) - cache_hits)
+                raw_chars = max(0, int(total_chars) - cached_chars)
+                cache_hit_rate = round((cache_hits / int(total_reqs)) * 100, 2) if int(total_reqs) > 0 else 0.0
+
+                # Throughput RPM and CPM
+                minutes_window = max(1, hours * 60)
+                rpm = round(int(total_reqs) / minutes_window, 2)
+                cpm = int(int(total_chars) / minutes_window)
+
                 # 2. Usage by key
                 by_key_query = (
                     select(
@@ -106,11 +124,33 @@ class UsageTracker:
                     for row in by_model_res.all()
                 ]
 
-                # 4. Recent logs
+                # 4. Hourly trends
+                # Fetch recent logs across the window to assemble hourly buckets
+                trends_query = (
+                    select(
+                        ApiUsageLog.timestamp,
+                        func.coalesce(ApiUsageLog.model_worker_id, "unknown").label("worker"),
+                        ApiUsageLog.char_count,
+                    )
+                    .where(ApiUsageLog.timestamp >= since)
+                    .order_by(ApiUsageLog.timestamp.asc())
+                )
+                trends_res = await session.execute(trends_query)
+                hourly_buckets: Dict[str, Dict[str, Any]] = {}
+                for row in trends_res.all():
+                    hour_key = row.timestamp.strftime("%H:00")
+                    if hour_key not in hourly_buckets:
+                        hourly_buckets[hour_key] = {"time": hour_key, "total_chars": 0, "workers": {}}
+                    hourly_buckets[hour_key]["total_chars"] += row.char_count
+                    w = row.worker
+                    hourly_buckets[hour_key]["workers"][w] = hourly_buckets[hour_key]["workers"].get(w, 0) + row.char_count
+                hourly_trends = list(hourly_buckets.values())
+
+                # 5. Recent logs (expanded to 50 items)
                 recent_query = (
                     select(ApiUsageLog)
                     .order_by(desc(ApiUsageLog.id))
-                    .limit(20)
+                    .limit(50)
                 )
                 recent_res = await session.execute(recent_query)
                 recent_logs = [
@@ -123,6 +163,7 @@ class UsageTracker:
                         "chars": row.char_count,
                         "latency_ms": round(row.latency_ms, 2),
                         "status": row.status_code,
+                        "is_cache_hit": row.latency_ms < 15.0,
                     }
                     for row in recent_res.scalars().all()
                 ]
@@ -131,6 +172,16 @@ class UsageTracker:
                     "total_requests": int(total_reqs),
                     "total_chars": int(total_chars),
                     "average_latency_ms": round(float(avg_latency), 2),
+                    "rpm": rpm,
+                    "cpm": cpm,
+                    "cache_metrics": {
+                        "cache_hit_count": cache_hits,
+                        "cache_miss_count": raw_reqs,
+                        "cache_hit_rate": cache_hit_rate,
+                        "cached_chars": cached_chars,
+                        "raw_chars": raw_chars,
+                    },
+                    "hourly_trends": hourly_trends,
                     "usage_by_key": usage_by_key,
                     "usage_by_model": usage_by_model,
                     "recent_logs": recent_logs,
@@ -143,13 +194,31 @@ class UsageTracker:
                 total_chars = sum(l["char_count"] for l in logs)
                 avg_latency = (sum(l["latency_ms"] for l in logs) / total_reqs) if total_reqs > 0 else 0.0
 
+                cache_hits = len([l for l in logs if l.get("latency_ms", 0.0) < 15.0])
+                cached_chars = sum(l["char_count"] for l in logs if l.get("latency_ms", 0.0) < 15.0)
+                cache_hit_rate = round((cache_hits / total_reqs) * 100, 2) if total_reqs > 0 else 0.0
+                minutes_window = max(1, hours * 60)
+
                 return {
                     "total_requests": total_reqs,
                     "total_chars": total_chars,
                     "average_latency_ms": round(avg_latency, 2),
+                    "rpm": round(total_reqs / minutes_window, 2),
+                    "cpm": int(total_chars / minutes_window),
+                    "cache_metrics": {
+                        "cache_hit_count": cache_hits,
+                        "cache_miss_count": total_reqs - cache_hits,
+                        "cache_hit_rate": cache_hit_rate,
+                        "cached_chars": cached_chars,
+                        "raw_chars": total_chars - cached_chars,
+                    },
+                    "hourly_trends": [],
                     "usage_by_key": [],
                     "usage_by_model": [],
-                    "recent_logs": [],
+                    "recent_logs": [
+                        {**l, "time": l["timestamp"].isoformat(), "is_cache_hit": l.get("latency_ms", 0.0) < 15.0}
+                        for l in logs[-50:]
+                    ],
                 }
 
 
