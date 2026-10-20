@@ -1,24 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 :root {
-  --bg-primary: #090d16;
-  --bg-surface: #111827;
-  --bg-surface-hover: #1f293d;
-  --border-subtle: #1e293b;
-  --border-focus: #4f46e5;
-  --text-main: #f8fafc;
-  --text-muted: #94a3b8;
-  --primary: #6366f1;
-  --primary-hover: #4f46e5;
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
+  --bg-dark: #0d0e12;
+  --card-bg: #14151b;
+  --card-border: #1e2029;
+  --card-hover: #191b24;
+  --accent-blue: #3b82f6;
+  --accent-purple: #8b5cf6;
+  --accent-green: #10b981;
+  --accent-orange: #f97316;
+  --accent-teal: #14b8a6;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
 }
 
 body {
   font-family: 'Plus Jakarta Sans', sans-serif;
-  background-color: var(--bg-primary);
-  color: var(--text-main);
+  background-color: var(--bg-dark);
+  color: #f1f5f9;
   margin: 0;
   padding: 0;
   overflow-x: hidden;
@@ -28,34 +27,117 @@ body {
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Custom Scrollbar */
+/* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: #0d0e12;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: #262936;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #393e52;
 }
 
-.sidebar-nav-item.active {
-  background-color: rgba(99, 102, 241, 0.15);
-  color: #818cf8;
-  border-left: 3px solid #6366f1;
+/* KEEPER Card Style */
+.k-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  transition: all 0.2s ease;
 }
 
+.k-card:hover {
+  border-color: #2e3240;
+}
+
+/* Pill Navigation Tabs */
+.k-tab-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #94a3b8;
+  border-radius: 9999px;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.k-tab-btn:hover {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.k-tab-btn.active {
+  color: #0f172a;
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+/* Glowing Top Accent Borders */
+.k-glow-blue {
+  box-shadow: 0 0 25px -5px rgba(59, 130, 246, 0.12);
+  border-top: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.k-glow-purple {
+  box-shadow: 0 0 25px -5px rgba(139, 92, 246, 0.12);
+  border-top: 1px solid rgba(139, 92, 246, 0.4);
+}
+
+.k-glow-green {
+  border-top: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.k-glow-orange {
+  border-top: 1px solid rgba(249, 115, 22, 0.4);
+}
+
+.k-glow-teal {
+  border-top: 1px solid rgba(20, 184, 166, 0.4);
+}
+
+.k-glow-amber {
+  border-top: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+/* Heatmap Grid Cell Style */
+.heat-cell {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  transition: transform 0.15s, outline 0.15s;
+  cursor: pointer;
+  position: relative;
+}
+
+.heat-cell:hover {
+  transform: scale(1.4);
+  outline: 2px solid #ffffff;
+  z-index: 20;
+}
+
+/* Floating Tooltip for Heatmaps */
+#heatmapTooltip {
+  position: absolute;
+  display: none;
+  background: #1e2029;
+  border: 1px solid #333846;
+  color: #f8fafc;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+/* Legacy helper classes for backwards compatibility */
 .glass-card {
-  background: rgba(17, 24, 39, 0.85);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--border-subtle);
-}
-
-.table-row-hover:hover {
-  background-color: rgba(30, 41, 59, 0.5);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
 }

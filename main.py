@@ -143,7 +143,6 @@ class ApiKeyValidationMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# Add CORSMiddleware first
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -155,6 +154,7 @@ app.add_middleware(
 # Add PrivateNetworkAccessMiddleware after CORSMiddleware so it wraps outer
 app.add_middleware(PrivateNetworkAccessMiddleware)
 app.add_middleware(ApiKeyValidationMiddleware)
+
 
 # Static files directory
 STATIC_DIR = _SERVER_DIR / "static"

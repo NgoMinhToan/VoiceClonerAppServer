@@ -148,3 +148,19 @@ Toàn bộ **31/31 test cases** trong `VoiceClonerAppServer/tests/` đã đượ
   - Chỉ số `tts_chars_today` được lấy theo thời gian thực từ Redis và đồng bộ lưu trữ bền vững vào bảng SQL `daily_usages`.
   - Bảng điều khiển Web Dashboard hiển thị rõ ràng: `X / Y slots` và số lượng ký tự TTS đã sử dụng hôm nay.
 - **Đạt 38/38 test cases tự động** trong `VoiceClonerAppServer` vượt qua 100%.
+
+---
+
+## 6. Phase 17: Tái Cấu Trúc Toàn Diện Giao Diện Quản Trị KEEPER Console (Interactive Charts & Cursor Hover)
+
+- **Giao diện KEEPER Dark-Theme cao cấp (`/dashboard`)**:
+  - Chuyển đổi từ thanh điều hướng sidebar cũ sang thanh điều hướng top-nav 6 tab tinh gọn: `Overview`, `Realtime`, `Request Events`, `Voice Workers`, `API Keys`, `Settings` (loại bỏ Analysis và Ranking theo yêu cầu).
+  - Bảng màu tối sâu sắc nét (`#0d0e12`, `#14151b`, `#1e2029`) kết hợp hiệu ứng viền phát sáng (`.k-glow-blue`, `.k-glow-purple`, `.k-glow-green`, `.k-glow-orange`, `.k-glow-teal`, `.k-glow-amber`).
+- **Tương tác chuột thông minh (Universal Cursor Hover)**:
+  - Tất cả các biểu đồ Chart.js (Spline Trends, Dual-axis Throughput, Request Outcomes, Composition Donut, và 6 sparklines) đều hỗ trợ xem chỉ số chi tiết theo con trỏ chuột (`mode: 'index', intersect: false`) với tooltip tối màu sang trọng.
+  - Ma trận ô vuông Recent Activity (Character Activity & Request Health Timeline) tích hợp popover động hiển thị chính xác mốc giờ, số ký tự xử lý và tỷ lệ/trạng thái lỗi khi rà chuột.
+- **Mở rộng API Backend Metrics (`/v1/management/metrics/summary`)**:
+  - Bổ sung `cache_metrics` (tính toán chi tiết tỷ lệ Cache Hit SHA-256 < 15ms), thông lượng `rpm` (requests/min), `cpm` (characters/min), và `hourly_trends` theo từng worker node.
+  - Mở rộng nhật ký sự kiện `recent_logs` lên 50 dòng kèm cờ `is_cache_hit`.
+- **Đạt 42/42 test cases tự động** vượt qua 100% không phát sinh lỗi hồi quy.
+
