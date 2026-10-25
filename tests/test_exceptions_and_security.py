@@ -287,3 +287,190 @@ def test_management_unauthorized_access():
     m_key = settings_manager.get_settings().security.management_key
     res3 = client.delete("/v1/management/users/non_existent_user_id_xyz", headers={"X-Management-Key": m_key})
     assert res3.status_code == 404
+
+
+def test_preview_exceeds_max_char_limit():
+    user_res = client.post(
+        "/v1/auth/register",
+        json={"email": f"limit_probe_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Limit Probe"}
+    )
+    token = user_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Default max_preview_char_limit is 250 chars. Text with 251 chars should be rejected with 400.
+    long_preview_text = "A" * 251
+    res = client.post(
+        "/v1/voices/preview",
+        headers=headers,
+        json={"voice_id": "minh_duc", "text": long_preview_text}
+    )
+    assert res.status_code == 400
+    assert "vượt quá giới hạn tối đa" in res.json()["detail"]
+
+
+def test_preview_insufficient_remaining_quota(monkeypatch):
+    from VoiceClonerAppServer.services import model_dispatcher
+
+    async def mock_synth(**kwargs):
+        return b"RIFF" + (b"\x00" * 40) + b"audioClipWavData48k" * 2, 0.01, "worker-mock"
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_synth)
+
+    user_res = client.post(
+        "/v1/auth/register",
+        json={"email": f"quota_probe_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Quota Probe"}
+    )
+    token = user_res.json()["access_token"]
+    user_id = user_res.json()["user"]["id"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Temporarily set daily_tts_char_limit to 1000 chars via management settings
+    m_key = settings_manager.get_settings().security.management_key
+    client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": m_key},
+        json={"concurrency": {"daily_tts_char_limit": 1000}}
+    )
+
+    try:
+        # Pre-fill user usage with unique text to guarantee Cache MISS (e.g. 950 chars out of 1000 limit)
+        fill_prefix = f"FILL_{uuid.uuid4().hex}_{time.time()}_"
+        speech_text = fill_prefix + ("Z" * (950 - len(fill_prefix)))
+        fill_len = len(speech_text)
+
+        speech_fill = client.post(
+            "/v1/audio/speech",
+            headers=headers,
+            json={"voice": "minh_duc", "text": speech_text}
+        )
+        assert speech_fill.status_code == 200
+        assert speech_fill.headers.get("x-cache-status") == "MISS" or speech_fill.headers.get("X-Cache-Status") == "MISS"
+
+        # Verify remaining chars is 1000 - fill_len = 50
+        me = client.get("/v1/auth/me", headers=headers).json()
+        assert me["daily_tts_chars_used"] == fill_len
+        remaining = 1000 - fill_len
+
+        # Preview request with (remaining + 15) chars -> Insufficient! (MUST reject with 403)
+        preview_prefix = f"PREV_{uuid.uuid4().hex}_"
+        phrase2 = preview_prefix + ("B" * (remaining + 15 - len(preview_prefix)))
+        res2 = client.post(
+            "/v1/voices/preview",
+            headers=headers,
+            json={"voice_id": "minh_duc", "text": phrase2}
+        )
+        assert res2.status_code == 403
+        assert "không đủ" in res2.json()["detail"]
+        assert f"{remaining} ký tự còn lại" in res2.json()["detail"]
+    finally:
+        # Restore default daily limit 100,000
+        client.put(
+            "/v1/management/settings",
+            headers={"X-Management-Key": m_key},
+            json={"concurrency": {"daily_tts_char_limit": 100000}}
+        )
+
+
+def test_preview_quota_rollback_on_failure(monkeypatch):
+    from VoiceClonerAppServer.services import model_dispatcher
+
+    async def mock_failing_synth(**kwargs):
+        raise RuntimeError("Worker node crashed during preview")
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_failing_synth)
+
+    user_res = client.post(
+        "/v1/auth/register",
+        json={"email": f"prev_rollback_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Preview Rollback"}
+    )
+    token = user_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    me_before = client.get("/v1/auth/me", headers=headers).json()
+    used_before = me_before["daily_tts_chars_used"]
+
+    unique_text = f"Kiểm tra rollback preview {time.time()}"
+    res = client.post(
+        "/v1/voices/preview",
+        headers=headers,
+        json={"voice_id": "minh_duc", "text": unique_text}
+    )
+    assert res.status_code == 503
+
+    me_after = client.get("/v1/auth/me", headers=headers).json()
+    assert me_after["daily_tts_chars_used"] == used_before
+
+
+def test_speech_exceeds_max_char_limit():
+    user_res = client.post(
+        "/v1/auth/register",
+        json={"email": f"speech_limit_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Speech Limit Probe"}
+    )
+    token = user_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Default max_speech_char_limit is 2000 chars. Text with 2001 chars should be rejected with 400.
+    long_speech_text = "A" * 2001
+    res = client.post(
+        "/v1/audio/speech",
+        headers=headers,
+        json={"voice": "minh_duc", "text": long_speech_text}
+    )
+    assert res.status_code == 400
+    assert "vượt quá giới hạn tối đa" in res.json()["detail"]
+
+
+def test_speech_insufficient_remaining_quota(monkeypatch):
+    from VoiceClonerAppServer.services import model_dispatcher
+
+    async def mock_synth(**kwargs):
+        return b"RIFF" + (b"\x00" * 40) + b"speechDataStreamWav" * 2, 0.01, "worker-mock"
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_synth)
+
+    user_res = client.post(
+        "/v1/auth/register",
+        json={"email": f"speech_quota_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Speech Quota Probe"}
+    )
+    token = user_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    m_key = settings_manager.get_settings().security.management_key
+    client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": m_key},
+        json={"concurrency": {"daily_tts_char_limit": 1000}}
+    )
+
+    try:
+        # Pre-fill user usage with 960 chars (1000 - 960 = 40 remaining)
+        fill_prefix = f"FILL_SP_{uuid.uuid4().hex}_{time.time()}_"
+        speech_text = fill_prefix + ("K" * (960 - len(fill_prefix)))
+        fill_len = len(speech_text)
+
+        speech_fill = client.post(
+            "/v1/audio/speech",
+            headers=headers,
+            json={"voice": "minh_duc", "text": speech_text}
+        )
+        assert speech_fill.status_code == 200
+        remaining = 1000 - fill_len
+
+        # Now send speech request with (remaining + 10) chars -> Insufficient! (MUST reject with 403)
+        req_prefix = f"REQ_SP_{uuid.uuid4().hex}_"
+        excess_text = req_prefix + ("M" * (remaining + 10 - len(req_prefix)))
+        res = client.post(
+            "/v1/audio/speech",
+            headers=headers,
+            json={"voice": "minh_duc", "text": excess_text}
+        )
+        assert res.status_code == 403
+        assert "không đủ" in res.json()["detail"]
+        assert f"{remaining} ký tự còn lại" in res.json()["detail"]
+    finally:
+        client.put(
+            "/v1/management/settings",
+            headers={"X-Management-Key": m_key},
+            json={"concurrency": {"daily_tts_char_limit": 100000}}
+        )
+

@@ -110,14 +110,22 @@ def test_preview_audio_cache_flow(monkeypatch):
 
     test_text = f"Bản nghe thử riêng biệt {time.time()}"
 
-    # First preview call -> MISS
+    # First preview call -> MISS (must deduct quota)
     res1 = client.post("/v1/voices/preview", headers=headers, json={"voice_id": "pham_tuyen", "text": test_text})
     assert res1.status_code == 200
     assert res1.headers.get("x-cache-status") == "MISS" or res1.headers.get("X-Cache-Status") == "MISS"
     assert preview_call_count == 1
 
-    # Second preview call -> HIT
+    # Check quota deducted for first preview call
+    me1 = client.get("/v1/auth/me", headers=headers).json()
+    chars_used_first = me1["daily_tts_chars_used"]
+    assert chars_used_first == len(test_text)
+
+    # Second preview call -> HIT (must NOT deduct quota again)
     res2 = client.post("/v1/voices/preview", headers=headers, json={"voice_id": "pham_tuyen", "text": test_text})
     assert res2.status_code == 200
     assert res2.headers.get("x-cache-status") == "HIT" or res2.headers.get("X-Cache-Status") == "HIT"
     assert preview_call_count == 1
+
+    me2 = client.get("/v1/auth/me", headers=headers).json()
+    assert me2["daily_tts_chars_used"] == chars_used_first

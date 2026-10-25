@@ -79,7 +79,7 @@
 | Phương thức | Endpoint | Header / Auth | Mô tả |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/v1/audio/speech` | Bearer hoặc Client Key | Tổng hợp âm thanh 48kHz WAV từ văn bản (tích hợp Audio Cache SHA-256 < 5ms & miễn trừ quota, kiểm tra quota ký tự, lọc worker theo voice, điều phối Least-Active) |
-| `POST` | `/v1/voices/preview` | Bearer hoặc Client Key | Kết xuất mẫu nghe thử nhanh (hỗ trợ Audio Cache) |
+| `POST` | `/v1/voices/preview` | Bearer hoặc Client Key | Kết xuất mẫu nghe thử nhanh (hỗ trợ Audio Cache, giới hạn `max_preview_char_limit` cấu hình qua Dashboard, kiểm tra & trừ quota ký tự hàng ngày, kiểm tra quota còn lại) |
 
 ### 2.4 Nhóm Quản Trị Hệ Thống (`/v1/management`, `/dashboard`)
 | Phương thức | Endpoint | Header / Auth | Mô tả |
@@ -163,4 +163,21 @@ Toàn bộ **31/31 test cases** trong `VoiceClonerAppServer/tests/` đã đượ
   - Bổ sung `cache_metrics` (tính toán chi tiết tỷ lệ Cache Hit SHA-256 < 15ms), thông lượng `rpm` (requests/min), `cpm` (characters/min), và `hourly_trends` theo từng worker node.
   - Mở rộng nhật ký sự kiện `recent_logs` lên 50 dòng kèm cờ `is_cache_hit`.
 - **Đạt 42/42 test cases tự động** vượt qua 100% không phát sinh lỗi hồi quy.
+
+---
+
+## 7. Phase 18: Bịt Lỗ Hổng Preview Giọng Nói, Đồng Bộ Hạn Mức Speech & Preview, và Quản Trị Giới Hạn Qua Dashboard
+
+- **Khắc phục lỗ hổng lạm dụng nghe thử & Đồng bộ hóa toàn diện hai API Speech & Preview**:
+  - Đồng bộ luồng bảo vệ và kiểm soát hạn mức cho cả `POST /v1/audio/speech` và `POST /v1/voices/preview`:
+    1. Kiểm tra giới hạn độ dài ký tự tối đa của request (`max_speech_char_limit` cho Speech, `max_preview_char_limit` cho Preview). Lập tức từ chối với HTTP 400 (`Văn bản vượt quá giới hạn tối đa cho phép...`).
+    2. Kiểm tra hạn mức ký tự còn lại của người dùng (`remaining_chars = max(0, daily_limit - current_used)`). Nếu `char_count > remaining_chars`: lập tức từ chối với HTTP 403 (`Hạn mức ký tự còn lại hôm nay không đủ...`).
+    3. Kiểm tra tần suất gọi (`check_rate_limit(current_user.id)`) -> HTTP 429 nếu spam.
+    4. Tra cứu Audio Cache (SHA-256): Nếu Cache HIT, phục vụ ngay file audio `< 10ms` và áp dụng cơ chế miễn trừ quota (Zero Inference & Quota Free).
+    5. Khi Cache MISS: trừ quota ký tự nguyên tử qua Redis `check_and_increment_daily_quota`, gọi worker tổng hợp, tự động hoàn trả (rollback) nếu lỗi (HTTP 503), cập nhật `DailyUsage` trong SQL database và lưu Audio Cache.
+- **Cấu hình giới hạn độ dài nghe thử & speech động (`max_preview_char_limit` & `max_speech_char_limit`)**:
+  - Bổ sung trường `max_preview_char_limit` (mặc định 250 ký tự, min 10, max 5.000) và `max_speech_char_limit` (mặc định 2.000 ký tự, min 100, max 10.000) vào nhóm `concurrency` trong `settings_manager.py` và `settings.json`.
+- **Giao diện điều chỉnh trên Dashboard (`/dashboard` - Tab 6 Settings)**:
+  - Bổ sung card "Cấu Hình Hạn Mức Speech & Preview" cho phép quản trị viên xem và cập nhật `max_speech_char_limit`, `max_preview_char_limit`, `daily_tts_char_limit`, và `rate_limit_requests_per_minute` trực tiếp trên web với tính năng hot-reload tức thì.
+- **Đạt 47/47 test cases tự động** trong `VoiceClonerAppServer` và **76/76 test cases** trên toàn hệ thống microservices vượt qua 100% không phát sinh lỗi hồi quy.
 

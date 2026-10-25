@@ -65,8 +65,8 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `DELETE /v1/voices/{voice_id}`: Xóa giọng clone và giải phóng slot quota.
 
 ### 4.3 Tổng Hợp Âm Thanh (`/v1/audio`) & Nghe Thử
-- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (kiểm tra quota ký tự, lọc worker theo voice capability, điều phối Least-Active).
-- `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng 3s.
+- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (kiểm tra giới hạn độ dài `max_speech_char_limit`, kiểm tra hạn mức còn lại, kiểm tra quota ký tự, lọc worker theo voice capability, điều phối Least-Active).
+- `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng (hỗ trợ Audio Cache, giới hạn độ dài `max_preview_char_limit`, kiểm tra hạn mức còn lại, kiểm tra và trừ quota ký tự hàng ngày).
 
 ### 4.4 Trạng Thái Hệ Thống (`/v1/system`)
 - `GET /health`: Probe kiểm tra container alive.
@@ -104,7 +104,7 @@ Chạy bộ kiểm thử tự động pytest:
 ```bash
 pytest tests/ -v
 ```
-Toàn bộ 38 test cases kiểm tra capability load balancing, dynamic voice discovery, auth lifecycle, token blacklist, hot-reload settings on disk change, strict 3-tier client key verification across all endpoints, mandatory user auth on speech/preview/clone, audio cache hit/miss, user management (slots & real-time TTS chars) và dashboard delivery.
+Toàn bộ 47 test cases kiểm tra capability load balancing, dynamic voice discovery, auth lifecycle, token blacklist, hot-reload settings on disk change, strict 3-tier client key verification across all endpoints, mandatory user auth on speech/preview/clone, audio cache hit/miss, speech & preview character limits, upfront remaining quota enforcement, user management (slots & real-time TTS chars) và dashboard delivery.
 
 ### Kích Hoạt Git Pre-Push Hook Cục Bộ:
 Để git tự động chạy toàn bộ test và ngăn chặn lệnh push nếu có lỗi:

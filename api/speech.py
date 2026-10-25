@@ -13,6 +13,7 @@ from VoiceClonerAppServer.core.database import get_db
 from VoiceClonerAppServer.core.redis_client import (
     check_and_increment_daily_quota,
     check_rate_limit,
+    get_daily_usage,
     rollback_daily_quota,
 )
 from VoiceClonerAppServer.core.security import get_current_user, get_optional_user, verify_client_api_key
@@ -77,7 +78,32 @@ async def create_speech(
         f"user='{current_user.email}' | client='{client_name}' | format={response_format}"
     )
 
-    # 3. Check Audio Cache (deterministic SHA-256 excluding speed/pitch for player-side tuning)
+    # 3. Check max speech character limit from settings
+    max_speech_limit = settings_manager.get_settings().concurrency.max_speech_char_limit
+    if char_count > max_speech_limit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Văn bản cần tổng hợp vượt quá giới hạn tối đa cho phép ({char_count}/{max_speech_limit} ký tự).",
+        )
+
+    # 4. Check remaining daily quota
+    daily_limit = settings_manager.get_settings().concurrency.daily_tts_char_limit
+    current_used = await get_daily_usage(current_user.id)
+    remaining_chars = max(0, daily_limit - current_used)
+    if char_count > remaining_chars:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
+        )
+
+    # 5. Check rate limit
+    if not await check_rate_limit(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
+        )
+
+    # 6. Check Audio Cache (deterministic SHA-256 excluding speed/pitch for player-side tuning)
     cache_key = cache_service.get_cache_key(
         voice_id=voice_name,
         text=input_text,
@@ -128,14 +154,7 @@ async def create_speech(
 
     logger.info(f"🔄 [AUDIO CACHE MISS] voice='{voice_name}', text_len={char_count} -> Checking quota and dispatching to worker...")
 
-    # 4. Check rate limit & user daily quota (Cache MISS path)
-    if not await check_rate_limit(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
-        )
-
-    daily_limit = settings_manager.get_settings().concurrency.daily_tts_char_limit
+    # 7. Deduct daily quota atomically (Cache MISS path)
     if not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -250,11 +269,19 @@ async def preview_voice(
     request: PreviewSpeechRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """
     Quick preview playback for voice catalog.
     Uses sample text or provided text, returns 48kHz WAV audio.
+    Enforces maximum preview character limit and daily quota tracking.
     """
+    client_key: Optional[ClientApiKeyConfig] = None
+    if x_api_key:
+        client_key = settings_manager.find_client_key(x_api_key)
+    client_name = client_key.name if client_key else current_user.full_name
+    client_id = client_key.id if client_key else current_user.id
+
     voice_id = request.voice_id
     sample_text = (request.text or "").strip()
 
@@ -289,6 +316,33 @@ async def preview_voice(
     if not sample_text:
         sample_text = "Xin chào! Đây là bản nghe thử được kết xuất trực tiếp bằng công nghệ AI Neural 48kHz."
 
+    char_count = len(sample_text)
+
+    # 1. Check max preview character limit from settings
+    max_preview_limit = settings_manager.get_settings().concurrency.max_preview_char_limit
+    if char_count > max_preview_limit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Văn bản nghe thử vượt quá giới hạn tối đa cho phép ({char_count}/{max_preview_limit} ký tự).",
+        )
+
+    # 2. Check remaining daily quota
+    daily_limit = settings_manager.get_settings().concurrency.daily_tts_char_limit
+    current_used = await get_daily_usage(current_user.id)
+    remaining_chars = max(0, daily_limit - current_used)
+    if char_count > remaining_chars:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
+        )
+
+    # 3. Check rate limit
+    if not await check_rate_limit(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
+        )
+
     preview_cache_key = cache_service.get_cache_key(
         voice_id=f"preview_{voice_id}",
         text=sample_text,
@@ -297,13 +351,39 @@ async def preview_voice(
     )
     cached_preview = cache_service.get_cached_file(preview_cache_key)
     if cached_preview:
-        logger.info(f"⚡ [PREVIEW CACHE HIT] voice='{voice_id}' -> Instant preview returned from cache ({cached_preview.name})")
-        return Response(
-            content=cached_preview.read_bytes(),
-            media_type="audio/wav",
-            headers={"Content-Type": "audio/wav", "X-Sample-Rate": "48000", "X-Cache-Status": "HIT"},
+        t_cache = time.perf_counter()
+        wav_bytes = cached_preview.read_bytes()
+        duration_ms = (time.perf_counter() - t_cache) * 1000.0
+
+        logger.info(f"⚡ [PREVIEW CACHE HIT] voice='{voice_id}' -> Instant preview returned from cache ({cached_preview.name}, {duration_ms:.2f}ms)")
+
+        await usage_tracker.log_usage(
+            client_key_id=client_id,
+            client_key_name=client_name,
+            endpoint="/v1/voices/preview",
+            model_worker_id="cache-hit",
+            char_count=char_count,
+            latency_ms=duration_ms,
+            status_code=200,
         )
 
+        headers = {
+            "Content-Type": "audio/wav",
+            "X-Sample-Rate": "48000",
+            "X-Execution-Time-Ms": f"{duration_ms:.2f}",
+            "X-Cache-Status": "HIT",
+            "X-Model-Worker": "cache",
+        }
+        return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
+
+    # 4. Cache MISS: Deduct daily quota atomically
+    if not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Bạn đã sử dụng hết hạn mức {daily_limit:,} ký tự hôm nay. Hạn mức sẽ được làm mới vào 00:00.",
+        )
+
+    t0 = time.perf_counter()
     try:
         audio_bytes, exec_sec, worker_id = await model_dispatcher.synthesize(
             text=sample_text,
@@ -315,16 +395,66 @@ async def preview_voice(
             ref_audio_path=ref_audio_path,
             ref_npz_base64=ref_npz_base64,
         )
+        duration_ms = (time.perf_counter() - t0) * 1000.0
+
         if audio_bytes and len(audio_bytes) > 44:
             try:
                 cache_service.save_cache(preview_cache_key, audio_bytes)
-            except Exception:
-                pass
-        return Response(
-            content=audio_bytes,
-            media_type="audio/wav",
-            headers={"Content-Type": "audio/wav", "X-Sample-Rate": "48000", "X-Cache-Status": "MISS"},
+                logger.info(f"💾 [PREVIEW CACHE SAVED] Key {preview_cache_key[:12]}... ({len(audio_bytes):,} bytes @ 48kHz saved)")
+            except Exception as ce:
+                logger.warning(f"Could not persist preview audio cache: {ce}")
+
+        # Asynchronous usage logging
+        await usage_tracker.log_usage(
+            client_key_id=client_id,
+            client_key_name=client_name,
+            endpoint="/v1/voices/preview",
+            model_worker_id=worker_id,
+            char_count=char_count,
+            latency_ms=duration_ms,
+            status_code=200,
         )
+
+        # Persist DailyUsage for user in SQL database
+        try:
+            today = datetime.now(timezone.utc).date()
+            usage_stmt = select(DailyUsage).where(
+                DailyUsage.user_id == current_user.id,
+                DailyUsage.usage_date == today,
+            )
+            usage_res = await db.execute(usage_stmt)
+            daily_usage_record = usage_res.scalar_one_or_none()
+            if daily_usage_record:
+                daily_usage_record.tts_characters_used += char_count
+                daily_usage_record.updated_at = utc_now()
+            else:
+                daily_usage_record = DailyUsage(
+                    user_id=current_user.id,
+                    usage_date=today,
+                    tts_characters_used=char_count,
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+                db.add(daily_usage_record)
+            await db.commit()
+        except Exception as ue:
+            logger.warning(f"Could not persist DailyUsage record for preview: {ue}")
+
+        logger.info(f"✅ [PREVIEW COMPLETED] voice='{voice_id}' via worker '{worker_id}' in {duration_ms:.2f}ms: received {len(audio_bytes):,} bytes @ 48kHz")
+
+        headers = {
+            "Content-Type": "audio/wav",
+            "X-Sample-Rate": "48000",
+            "X-Execution-Time-Ms": f"{duration_ms:.2f}",
+            "X-Cache-Status": "MISS",
+            "X-Model-Worker": worker_id,
+        }
+        return Response(content=audio_bytes, media_type="audio/wav", headers=headers)
     except Exception as e:
-        logger.error(f"Preview synthesis error: {e}")
-        raise HTTPException(status_code=500, detail="Không thể kết xuất bản nghe thử.")
+        await rollback_daily_quota(current_user.id, char_count)
+        duration_ms = (time.perf_counter() - t0) * 1000.0
+        logger.error(f"Preview synthesis error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể kết xuất bản nghe thử, dịch vụ tổng hợp tạm thời không khả dụng.",
+        )

@@ -39,6 +39,8 @@ def test_dashboard_html_contains_six_keeper_tabs():
     assert "tab-btn-workers" in html
     assert "tab-btn-keys" in html
     assert "tab-btn-settings" in html
+    assert "maxPreviewCharLimitInput" in html
+    assert "maxSpeechCharLimitInput" in html
     assert "tab-btn-analysis" not in html
     assert "tab-btn-ranking" not in html
 
@@ -52,6 +54,7 @@ def test_dashboard_js_implements_keeper_logic():
     assert "initSparklines" in js
     assert "initHeatmaps" in js
     assert "chartTrendsMain" in js
+    assert "saveSystemSettings" in js
 
 
 

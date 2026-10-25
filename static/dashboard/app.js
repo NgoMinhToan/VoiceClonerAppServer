@@ -1192,10 +1192,56 @@ async function revokeKey(keyId) {
 
 // ── TAB 6: SETTINGS & USERS MANAGEMENT ──
 
-function fetchSettings() {
+async function fetchSettings() {
   const input = document.getElementById('mgmtKeySettingsInput');
   if (input) input.value = getManagementKey();
+  try {
+    const res = await apiRequest('/v1/management/settings');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.concurrency) {
+        const speechInput = document.getElementById('maxSpeechCharLimitInput');
+        if (speechInput) speechInput.value = data.concurrency.max_speech_char_limit ?? 2000;
+        const previewInput = document.getElementById('maxPreviewCharLimitInput');
+        if (previewInput) previewInput.value = data.concurrency.max_preview_char_limit ?? 250;
+        const dailyLimitInput = document.getElementById('dailyTtsCharLimitInput');
+        if (dailyLimitInput) dailyLimitInput.value = data.concurrency.daily_tts_char_limit ?? 100000;
+        const rateLimitInput = document.getElementById('rateLimitRequestsInput');
+        if (rateLimitInput) rateLimitInput.value = data.concurrency.rate_limit_requests_per_minute ?? 60;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch system settings', e);
+  }
   fetchUsers();
+}
+
+async function saveSystemSettings() {
+  const speechLimit = parseInt(document.getElementById('maxSpeechCharLimitInput')?.value || '2000', 10);
+  const previewLimit = parseInt(document.getElementById('maxPreviewCharLimitInput')?.value || '250', 10);
+  const dailyLimit = parseInt(document.getElementById('dailyTtsCharLimitInput')?.value || '100000', 10);
+  const rateLimit = parseInt(document.getElementById('rateLimitRequestsInput')?.value || '60', 10);
+
+  try {
+    const res = await apiRequest('/v1/management/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        concurrency: {
+          max_speech_char_limit: speechLimit,
+          max_preview_char_limit: previewLimit,
+          daily_tts_char_limit: dailyLimit,
+          rate_limit_requests_per_minute: rateLimit,
+        },
+      }),
+    });
+    if (res.ok) {
+      showToast('Đã lưu cấu hình hạn mức hệ thống thành công!', 'success');
+    } else {
+      showToast('Không thể lưu cấu hình hạn mức trên server!', 'error');
+    }
+  } catch (e) {
+    showToast('Lỗi gửi cập nhật cấu hình hạn mức', 'error');
+  }
 }
 
 async function saveMgmtKeySettings() {

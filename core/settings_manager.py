@@ -47,6 +47,8 @@ class ConcurrencyConfig(BaseModel):
     max_queue_waiters: int = Field(8, ge=0, le=256)
     daily_tts_char_limit: int = Field(100000, ge=1000)
     rate_limit_requests_per_minute: int = Field(60, ge=1)
+    max_preview_char_limit: int = Field(250, ge=10, le=5000)
+    max_speech_char_limit: int = Field(2000, ge=100, le=10000)
 
 
 class AudioCacheConfig(BaseModel):

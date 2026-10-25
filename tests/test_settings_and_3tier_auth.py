@@ -99,17 +99,19 @@ def test_hot_reload_settings_persists():
     res = client.put(
         "/v1/management/settings",
         headers={"X-Management-Key": m_key},
-        json={"concurrency": {"max_concurrent_tts": 5, "max_queue_waiters": 12}}
+        json={"concurrency": {"max_concurrent_tts": 5, "max_queue_waiters": 12, "max_preview_char_limit": 300, "max_speech_char_limit": 2500}}
     )
     assert res.status_code == 200
     assert settings_manager.get_settings().concurrency.max_concurrent_tts == 5
     assert settings_manager.get_settings().concurrency.max_queue_waiters == 12
+    assert settings_manager.get_settings().concurrency.max_preview_char_limit == 300
+    assert settings_manager.get_settings().concurrency.max_speech_char_limit == 2500
 
     # Restore concurrency defaults
     client.put(
         "/v1/management/settings",
         headers={"X-Management-Key": m_key},
-        json={"concurrency": {"max_concurrent_tts": 2, "max_queue_waiters": 8}}
+        json={"concurrency": {"max_concurrent_tts": 2, "max_queue_waiters": 8, "max_preview_char_limit": 250, "max_speech_char_limit": 2000}}
     )
 
 
