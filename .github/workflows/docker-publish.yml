@@ -33,6 +33,7 @@ jobs:
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           REDIS_URL: "redis://localhost:6379/0"
+          PYTHONPATH: ".."
         run: |
           pytest tests/ -v
 
