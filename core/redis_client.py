@@ -105,27 +105,38 @@ class RedisClient:
         self._redis: Optional[aioredis.Redis] = None
         self._fallback: InMemoryCache = InMemoryCache()
         self._is_connected: bool = False
-        self._last_attempt: float = 0.0
-        self._lock = asyncio.Lock()
+        self._last_failure: float = 0.0
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def get_client(self):
-        async with self._lock:
-            if self._is_connected and self._redis:
+        try:
+            curr_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            curr_loop = None
+
+        if self._is_connected and self._redis:
+            if curr_loop is not None and self._loop is curr_loop and not curr_loop.is_closed():
                 return self._redis
-            now = time.time()
-            if not self._is_connected and (now - self._last_attempt < 5.0):
-                return self._fallback
-            self._last_attempt = now
-            try:
-                client = aioredis.from_url(REDIS_URL, decode_responses=True, socket_timeout=1.0)
-                await client.ping()
-                self._redis = client
-                self._is_connected = True
-                return self._redis
-            except Exception as e:
-                logger.warning(f"Redis unavailable at {REDIS_URL} ({e}). Falling back to InMemoryCache.")
-                self._is_connected = False
-                return self._fallback
+            self._redis = None
+            self._is_connected = False
+
+        now = time.time()
+        if now - self._last_failure < 5.0:
+            return self._fallback
+
+        try:
+            client = aioredis.from_url(REDIS_URL, decode_responses=True, socket_timeout=1.0)
+            await client.ping()
+            self._redis = client
+            self._loop = curr_loop
+            self._is_connected = True
+            return self._redis
+        except Exception as e:
+            self._last_failure = time.time()
+            logger.warning(f"Redis unavailable at {REDIS_URL} ({e}). Falling back to InMemoryCache.")
+            self._is_connected = False
+            self._redis = None
+            return self._fallback
 
     async def get(self, key: str) -> Optional[str]:
         try:
@@ -214,7 +225,8 @@ async def check_and_increment_daily_quota(user_id: str, char_count: int, limit: 
             res = await client.eval(CHECK_AND_INCR_QUOTA_LUA, 1, key, char_count, limit, 172800)
             return int(res) == 1
         except Exception:
-            pass
+            redis_client._is_connected = False
+            redis_client._redis = None
     return await redis_client._fallback.check_and_increment_quota(key, char_count, limit, 172800)
 
 
