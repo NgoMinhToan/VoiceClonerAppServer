@@ -105,14 +105,19 @@ class RedisClient:
         self._redis: Optional[aioredis.Redis] = None
         self._fallback: InMemoryCache = InMemoryCache()
         self._is_connected: bool = False
+        self._last_attempt: float = 0.0
         self._lock = asyncio.Lock()
 
     async def get_client(self):
         async with self._lock:
             if self._is_connected and self._redis:
                 return self._redis
+            now = time.time()
+            if not self._is_connected and (now - self._last_attempt < 5.0):
+                return self._fallback
+            self._last_attempt = now
             try:
-                client = aioredis.from_url(REDIS_URL, decode_responses=True, socket_timeout=2.0)
+                client = aioredis.from_url(REDIS_URL, decode_responses=True, socket_timeout=1.0)
                 await client.ping()
                 self._redis = client
                 self._is_connected = True
