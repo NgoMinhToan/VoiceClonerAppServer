@@ -1,6 +1,6 @@
 # VoiceClonerAppServer
 
-API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Tích hợp Dynamic Voice Discovery, Capability-Aware Least-Active Load Balancer, User Authentication JWT, và Bảng điều khiển lấy cảm hứng từ [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)).
+API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Tích hợp Dynamic Voice Discovery, Capability-Aware Least-Active Load Balancer, User Authentication JWT, và Bảng điều khiển quản trị thời gian thực).
 
 ---
 
@@ -13,7 +13,7 @@ API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Tích hợp
 - **Hệ thống xác thực người dùng đầy đủ (`/v1/auth/*`)**: Cung cấp API đăng ký, đăng nhập email/mật khẩu, đăng nhập Google OAuth2, cấp mới JWT access/refresh token, và hồ sơ người dùng (`/v1/auth/me`).
 - **Quản lý giọng nhân bản (Instant Voice Cloning `/v1/voices/clone`)**: Cho phép người dùng thu âm hoặc tải file mẫu để nhân bản giọng đọc, kiểm soát nghiêm ngặt hạn mức 3 slot clone/người dùng, lưu trữ tệp `.wav` và `.npz` speaker embedding.
 - **Tập trung cấu hình trong `config/settings.json`**: Mọi cài đặt cổng mạng, danh sách workers, giới hạn luồng (concurrency), bộ nhớ đệm âm thanh và danh sách Client API Keys đều được lưu trong file JSON và áp dụng ngay lập tức (Hot-Reload) mà không cần khởi động lại server.
-- **Giao diện quản trị hiện đại (KEEPER Dark Theme Console)**: Bảng điều khiển lấy cảm hứng từ CLIProxyAPI / KEEPER (`/dashboard`), tích hợp 6 tab chức năng tinh gọn (`Overview`, `Realtime`, `Request Events`, `Voice Workers`, `API Keys`, `Settings`), hỗ trợ rà chuột xem chỉ số chi tiết trên toàn bộ biểu đồ, sparklines và ma trận hoạt động (Activity Heatmaps & Request Health Timeline).
+- **Giao diện quản trị hiện đại (Dark Obsidian Theme Console)**: Bảng điều khiển tại `/dashboard`, tích hợp 7 tab chức năng (`Overview`, `Analysis`, `Realtime`, `Request Events`, `Voice Workers`, `API Keys`, `Settings`), hỗ trợ rà chuột xem chỉ số chi tiết trên toàn bộ biểu đồ, sparklines và ma trận hoạt động (Activity Heatmaps & Request Health Timeline).
 
 
 ---
@@ -73,7 +73,7 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `GET /v1/system/status`: Báo cáo phần cứng, backend, số lượng worker phục vụ Android Client.
 
 ### 4.5 Quản Trị Hệ Thống (`/v1/management` & `/dashboard`)
-- `GET /dashboard`: Giao diện điều khiển Web CLIProxyAPI / KEEPER style console.
+- `GET /dashboard`: Giao diện điều khiển Web AI Voice Gateway Console (Dark Obsidian Theme).
 - `GET/PUT /v1/management/settings`: Đọc và cập nhật cấu hình hệ thống (Hot-Reload).
 - `GET/POST/DELETE/PATCH /v1/management/keys`: Quản lý danh sách Client API Key.
 - `GET/POST/DELETE/PATCH /v1/management/workers`: Quản lý danh sách, thêm/xóa/bật/tắt và ping test đồng thời các worker inference.

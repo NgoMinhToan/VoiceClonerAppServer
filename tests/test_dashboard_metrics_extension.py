@@ -19,6 +19,11 @@ async def test_metrics_summary_contains_keeper_extended_fields():
         assert "recent_logs" in data
         assert "failed_requests" in data
         assert "success_requests" in data
+        assert "analysis" in data
+        assert "token_usage" in data["analysis"]
+        assert "model_usage" in data["analysis"]
+        assert "api_key_composition" in data["analysis"]
+        assert "latency_diagnostics" in data["analysis"]
         assert isinstance(data["cache_metrics"]["cache_hit_rate"], (int, float))
         assert isinstance(data["hourly_trends"], list)
         if len(data["recent_logs"]) > 0:
@@ -28,4 +33,14 @@ async def test_metrics_summary_contains_keeper_extended_fields():
             assert "chars" in first_log
             assert "status" in first_log
             assert "is_cache_hit" in first_log
+
+        # Verify dedicated analysis endpoint
+        res_analysis = await ac.get(
+            "/v1/management/metrics/analysis?hours=24&range_type=today",
+            headers={"X-Management-Key": "vc_admin_secret_key_123"},
+        )
+        assert res_analysis.status_code == 200
+        analysis_data = res_analysis.json()
+        assert "token_usage" in analysis_data
+        assert "model_usage" in analysis_data
 

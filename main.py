@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="VoiceClonerAppServer",
-    description="API Gateway, Reverse Proxy & Management Server (CLIProxyAPI Pattern)",
+    description="API Gateway, Reverse Proxy & AI Voice Management Console",
     version="1.0.0",
     lifespan=lifespan,
 )

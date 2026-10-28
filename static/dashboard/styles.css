@@ -1,24 +1,24 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
-/* ── KEEPER AUTHENTIC OBSIDIAN DESIGN TOKENS (cpa-usage-keeper) ── */
+/* ── KEEPER AUTHENTIC OBSIDIAN DESIGN TOKENS (Clean Dark Theme) ── */
 :root {
-  --bg-secondary: #151412;        /* Dark warm espresso/obsidian page background */
-  --bg-primary: #1d1b18;          /* Card surface background */
-  --bg-tertiary: #262320;         /* Recessed sparkline, dark input, punchcard background */
-  --bg-hover: #2e2a26;
-  --bg-quinary: #191714;
-  --floating-surface: #2a2723;
-  --floating-border: #4a443d;
-  --floating-shadow: 0 14px 30px rgba(0, 0, 0, 0.45);
+  --bg-secondary: #0f1013;        /* Clean deep obsidian page background */
+  --bg-primary: #17181d;          /* Card surface background */
+  --bg-tertiary: #1f2127;         /* Recessed sparkline, dark input, punchcard background */
+  --bg-hover: #272a33;
+  --bg-quinary: #131417;
+  --floating-surface: #1c1e24;
+  --floating-border: #2c2f38;
+  --floating-shadow: 0 14px 30px rgba(0, 0, 0, 0.55);
 
-  --text-primary: #f6f4f1;
-  --text-secondary: #c9c3bb;
-  --text-tertiary: #9c958d;
-  --text-quaternary: #6f6962;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #94a3b8;
+  --text-quaternary: #64748b;
 
-  --border-color: #3a3530;
-  --border-primary: #4a453f;
-  --border-hover: #5a544d;
+  --border-color: #262932;
+  --border-primary: #323642;
+  --border-hover: #434858;
 
   --primary-color: #8b8680;
   --primary-hover: #9a948e;
@@ -27,7 +27,7 @@
 
   --success-color: #10b981;
   --warning-color: #f59e0b;
-  --error-color: #c65746;
+  --error-color: #ef4444;
   --danger-color: var(--error-color);
 
   /* Card Accents */
@@ -37,8 +37,8 @@
   --accent-orange: #f97316;
   --accent-teal: #06b6d4;
   --accent-amber: #f59e0b;
-  --accent-rose: #fb5a5a;
-  --accent-pink: #db2777;
+  --accent-rose: #ef4444;
+  --accent-pink: #ec4899;
 
   /* Activity Heatmap Token levels (cpa-usage-keeper authentic) */
   --token-level-0: #262320;
@@ -248,12 +248,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(29, 27, 24, 0.95);
+  background: rgba(23, 24, 29, 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-color);
   border-radius: 28px;
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
   padding: 5px 8px;
   gap: 10px;
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -267,11 +267,89 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* Responsive Dock: Desktop Pills vs Mobile Dropdown */
+.dock-tabs-desktop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
 }
-.keeper-dock-left::-webkit-scrollbar {
+.dock-tabs-desktop::-webkit-scrollbar {
   display: none;
+}
+
+.dock-switcher-mobile {
+  display: none;
+  position: relative;
+}
+
+@media (max-width: 1023px) {
+  .dock-tabs-desktop {
+    display: none !important;
+  }
+  .dock-switcher-mobile {
+    display: inline-flex !important;
+  }
+}
+
+.dock-page-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dock-page-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-hover);
+}
+
+.dock-page-dropdown {
+  position: absolute;
+  top: 42px;
+  left: 0;
+  min-width: 200px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: var(--floating-shadow);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dock-page-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  width: 100%;
+  text-align: left;
+}
+.dock-page-item:hover, .dock-page-item.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .dock-collapse-btn {
@@ -297,8 +375,8 @@ body {
 
 /* Tab Navigation Buttons */
 .k-tab-btn, .k-tab-pill {
-  padding: 7px 18px;
-  font-size: 12.5px;
+  padding: 7px 16px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-tertiary);
   border-radius: 20px;
@@ -315,15 +393,15 @@ body {
 
 .k-tab-btn:hover, .k-tab-pill:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .k-tab-btn.active, .k-tab-pill.active {
-  color: var(--text-primary) !important;
-  background: #2a2723 !important;
-  border: 1px solid #4a443d !important;
+  color: #ffffff !important;
+  background: #252833 !important;
+  border: 1px solid #3b4052 !important;
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
 .keeper-dock-right {
@@ -395,7 +473,6 @@ body {
   border: 1px solid var(--border-color);
   border-radius: 20px;
   position: relative;
-  overflow: hidden;
   box-shadow: var(--shadow-lg);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
@@ -412,6 +489,7 @@ body {
   left: 0;
   right: 0;
   height: 2px;
+  border-radius: 20px 20px 0 0;
   opacity: 0.95;
   pointer-events: none;
 }
@@ -457,10 +535,18 @@ body {
   height: 58px;
   border: 1px solid var(--border-color);
   margin-top: 14px;
-  padding: 6px 8px;
-  overflow: hidden;
+  padding: 4px 6px;
+  overflow: visible;
   position: relative;
   width: 100%;
+}
+
+.legend-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
 }
 
 /* ── WINDOW SWITCHER (Day | Week | Month | Year) ── */
@@ -498,35 +584,40 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-/* ── PUNCHCARD HEATMAP ── */
+/* ── PUNCHCARD HEATMAP (cpa-usage-keeper authentic) ── */
 .activity-heatmap-container {
-  display: flex;
-  flex-direction: column;
   width: 100%;
-  overflow-x: auto;
-  padding-bottom: 4px;
+  overflow: hidden;
+  padding: 4px 0;
 }
 
 .activity-heatmap-grid {
   display: grid;
-  grid-template-rows: repeat(7, 12px);
-  grid-auto-flow: column;
+  width: 100%;
+  max-width: 100%;
   gap: 3px;
-  width: max-content;
+  grid-template-columns: repeat(52, minmax(0, 1fr));
+  grid-template-rows: repeat(7, minmax(0, 1fr));
+  grid-auto-flow: column;
+  margin-left: auto;
+  margin-right: auto;
+  aspect-ratio: 52 / 7;
 }
 
 .heat-cell {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), outline 0.15s;
-  cursor: pointer;
   position: relative;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  width: 100%;
+  aspect-ratio: 1;
+  min-width: 0;
+  border-radius: 2px;
+  transition: transform 0.15s ease, opacity 0.15s ease;
   background-color: var(--token-level-0);
 }
 
 .heat-cell:hover {
-  transform: scale(1.4);
+  transform: scaleY(1.5);
   outline: 2px solid #ffffff;
   z-index: 20;
 }
@@ -670,6 +761,130 @@ body {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
+}
+
+/* ── ANALYSIS CARD & COMPONENT STYLES ── */
+.analysis-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 24px;
+  padding: 14px 20px;
+  background: var(--bg-tertiary);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  margin-bottom: 16px;
+}
+.analysis-summary-item {
+  display: flex;
+  flex-direction: column;
+}
+.analysis-summary-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+.analysis-summary-value {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+.analysis-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 14px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.analysis-legend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.analysis-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Canvas full card stretching */
+.chart-container-full {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+}
+.chart-container-full canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+/* Analysis Heatmap Table Matrix */
+.heatmap-matrix-wrapper {
+  overflow-x: auto;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+.heatmap-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+.heatmap-matrix-table th {
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+.heatmap-matrix-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+.heatmap-matrix-table tr:hover td {
+  filter: brightness(1.15);
+}
+.heatmap-matrix-key {
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-primary) !important;
+  font-family: inherit;
+}
+
+/* Ranked items in Analysis */
+.ranking-row {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  transition: all 0.15s ease;
+}
+.ranking-row:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-hover);
 }
 
 /* Responsive dock */

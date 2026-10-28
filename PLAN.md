@@ -6,7 +6,7 @@
 3. **Capability / Voice-Aware Least-Active Routing:** Giải thuật điều phối lọc chính xác các worker có hỗ trợ `voice_id` được yêu cầu (hoặc hỗ trợ clone) trước khi tính toán worker ít việc nhất (Least-Active) kèm round-robin tiebreaker.
 4. Tích hợp mô hình bảo mật kết hợp: 3-tier API Key + User Bearer Token (JWT).
 5. Quản lý hạn mức ký tự hàng ngày (Daily Character Quota) và số lượng slot clone (tối đa 3 slots/user).
-6. Bảng điều khiển quản trị thời gian thực phong cách CLIProxyAPI (`/dashboard`).
+6. Bảng điều khiển quản trị thời gian thực phong cách KEEPER Dark Obsidian (`/dashboard`).
 
 ---
 
@@ -84,12 +84,13 @@
 ### 2.4 Nhóm Quản Trị Hệ Thống (`/v1/management`, `/dashboard`)
 | Phương thức | Endpoint | Header / Auth | Mô tả |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/dashboard` | `X-Management-Key` | Giao diện điều khiển Web CLIProxyAPI / KEEPER (Metrics, Realtime, Events, Keys, Workers, Users, Settings) |
+| `GET` | `/dashboard` | `X-Management-Key` | Giao diện điều khiển Web AI Voice Gateway Console (Overview, Analysis, Realtime, Request Events, Voice Workers, API Keys, Settings) |
 | `GET/POST/DELETE/PATCH` | `/v1/management/keys` | `X-Management-Key` | Quản lý Client API Keys |
 | `GET/POST/DELETE/PATCH` | `/v1/management/workers` | `X-Management-Key` | Quản lý danh sách, thêm/xóa/bật/tắt và ping test song song các Model Worker Nodes |
 | `POST` | `/v1/management/workers/test` | `X-Management-Key` | Ping kiểm tra địa chỉ worker bất kỳ |
 | `POST` | `/v1/management/cache/purge` | `X-Management-Key` | Dọn dẹp toàn bộ tệp âm thanh trong bộ đệm cache |
-| `GET` | `/v1/management/metrics/summary` | `X-Management-Key` | Tổng hợp số liệu lưu lượng và chẩn đoán (hỗ trợ lọc `hours` và `key_name`) |
+| `GET` | `/v1/management/metrics/summary` | `X-Management-Key` | Tổng hợp số liệu lưu lượng, chẩn đoán và phân tích (hỗ trợ `hours`, `range_type`, `tz_offset_minutes`, và `key_name`) |
+| `GET` | `/v1/management/metrics/analysis` | `X-Management-Key` | Dữ liệu chuyên sâu cho Tab Analysis (Token Usage Over Time, Top Models, Latency Scatter, Model Speed, Heatmap) |
 | `GET/PUT` | `/v1/management/settings` | `X-Management-Key` | Đọc và lưu cấu hình hệ thống với khả năng Hot-Reload tức thì |
 | `GET/PATCH/DELETE` | `/v1/management/users` | `X-Management-Key` | Quản trị tài khoản người dùng và điều chỉnh slot clone |
 

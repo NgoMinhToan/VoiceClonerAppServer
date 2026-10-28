@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VOICE CLONER - AI Voice Gateway Console (KEEPER Style)</title>
+  <title>VOICE CLONER - AI Voice Gateway Console</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="/static/dashboard/styles.css">
+  <link rel="stylesheet" href="/static/dashboard/styles.css?v=2.0.1">
 </head>
 <body class="min-h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white bg-[#0a0b0f] text-slate-100">
 
@@ -18,21 +18,21 @@
   <div id="toastContainer" class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
 
   <!-- TOP APP BAR -->
-  <header class="border-b border-slate-800/80 px-6 py-3 flex items-center justify-between bg-[#0f1118]/95 backdrop-blur sticky top-0 z-40">
+  <header class="border-b border-slate-800/80 px-6 py-3 flex items-center justify-between bg-[#111215]/95 backdrop-blur sticky top-0 z-40">
     <div class="flex items-center space-x-3">
       <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/20">
         <i class="fa-solid fa-wave-square text-white text-sm"></i>
       </div>
       <div class="flex items-baseline space-x-2">
         <span class="font-extrabold tracking-wider text-base text-white">VOICE CLONER</span>
-        <span class="text-[11px] font-semibold text-slate-500 tracking-wider">KEEPER PROXY GATEWAY</span>
-        <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-mono border border-slate-700">v1.15.9</span>
+        <span class="text-[11px] font-semibold text-slate-400 tracking-wider">AI VOICE GATEWAY CONSOLE</span>
+        <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 font-mono border border-slate-700">v1.15.9</span>
       </div>
     </div>
 
     <div class="flex items-center space-x-4 text-xs text-slate-400">
       <!-- Auto-refresh status & interval selector -->
-      <div class="flex items-center space-x-1.5 bg-[#141622] border border-slate-800 px-2.5 py-1 rounded-lg">
+      <div class="flex items-center space-x-1.5 bg-[#17181d] border border-slate-800 px-2.5 py-1 rounded-lg">
         <span class="w-2 h-2 rounded-full bg-emerald-400 live-dot" id="autoRefreshDot"></span>
         <span class="text-slate-400 text-[11px]">Auto:</span>
         <select id="autoRefreshSelect" onchange="onAutoRefreshChange()" class="bg-transparent text-slate-200 outline-none text-[11px] cursor-pointer">
@@ -50,7 +50,7 @@
         <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
       </a>
       <span class="text-slate-700">•</span>
-      <button onclick="openAuthModal()" class="hover:text-white flex items-center space-x-1.5 bg-[#141622] border border-slate-800 hover:border-slate-700 px-2.5 py-1 rounded-lg transition" title="Xác thực X-Management-Key">
+      <button onclick="openAuthModal()" class="hover:text-white flex items-center space-x-1.5 bg-[#17181d] border border-slate-800 hover:border-slate-700 px-2.5 py-1 rounded-lg transition" title="Xác thực X-Management-Key">
         <i class="fa-solid fa-shield-halved text-indigo-400"></i>
         <span>Management Key</span>
       </button>
@@ -61,39 +61,62 @@
     </div>
   </header>
 
-  <!-- SECONDARY NAV BAR (6 KEEPER Tabs) -->
-  <div class="border-b border-slate-800/80 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 bg-[#0d0f16]">
-    <div class="flex items-center space-x-1.5 overflow-x-auto">
-      <button onclick="switchKTab('overview')" id="tab-btn-overview" class="k-tab-btn active">Overview</button>
-      <button onclick="switchKTab('realtime')" id="tab-btn-realtime" class="k-tab-btn">Realtime</button>
-      <button onclick="switchKTab('events')" id="tab-btn-events" class="k-tab-btn">Request Events</button>
-      <button onclick="switchKTab('workers')" id="tab-btn-workers" class="k-tab-btn">Voice Workers</button>
-      <button onclick="switchKTab('keys')" id="tab-btn-keys" class="k-tab-btn">API Keys</button>
-      <button onclick="switchKTab('settings')" id="tab-btn-settings" class="k-tab-btn">Settings</button>
-    </div>
+  <!-- FLOATING DOCK TOOLBAR (cpa-usage-keeper authentic) -->
+  <div class="px-6 max-w-[1600px] mx-auto w-full pt-4 keeper-dock-wrapper">
+    <div class="keeper-dock">
+      <div class="flex items-center space-x-2">
+        <!-- Desktop Direct Tabs -->
+        <div class="dock-tabs-desktop space-x-1">
+          <button onclick="switchKTab('overview')" id="tab-btn-overview" class="k-tab-btn active">Overview</button>
+          <button onclick="switchKTab('analysis')" id="tab-btn-analysis" class="k-tab-btn">Analysis</button>
+          <button onclick="switchKTab('realtime')" id="tab-btn-realtime" class="k-tab-btn">Realtime</button>
+          <button onclick="switchKTab('events')" id="tab-btn-events" class="k-tab-btn">Request Events</button>
+          <button onclick="switchKTab('workers')" id="tab-btn-workers" class="k-tab-btn">Voice Workers</button>
+          <button onclick="switchKTab('keys')" id="tab-btn-keys" class="k-tab-btn">API Keys</button>
+          <button onclick="switchKTab('settings')" id="tab-btn-settings" class="k-tab-btn">Settings</button>
+        </div>
 
-    <!-- Filter dropdowns on right -->
-    <div class="flex items-center space-x-3 text-xs">
-      <div class="flex items-center space-x-2 bg-[#141622] border border-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
-        <i class="fa-solid fa-key text-[10px] text-slate-500"></i>
-        <span class="text-slate-500">Key:</span>
-        <select id="filterApiKey" onchange="onFilterChange()" class="bg-transparent text-slate-200 outline-none cursor-pointer text-xs max-w-[160px] truncate">
-          <option value="all">All Keys</option>
-        </select>
+        <!-- Mobile Dropdown Switcher -->
+        <div class="dock-switcher-mobile">
+          <button onclick="toggleMobilePageMenu()" id="dockMobilePageBtn" class="dock-page-btn">
+            <span id="dockMobileActiveLabel">Overview</span>
+            <i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i>
+          </button>
+          <div id="dockMobileDropdown" class="dock-page-dropdown hidden">
+            <button onclick="switchKTab('overview'); toggleMobilePageMenu();" class="dock-page-item" id="mobile-item-overview"><i class="fa-solid fa-gauge w-4"></i> Overview</button>
+            <button onclick="switchKTab('analysis'); toggleMobilePageMenu();" class="dock-page-item" id="mobile-item-analysis"><i class="fa-solid fa-chart-simple w-4"></i> Analysis</button>
+            <button onclick="switchKTab('realtime'); toggleMobilePageMenu();" class="dock-page-item" id="mobile-item-realtime"><i class="fa-solid fa-bolt w-4"></i> Realtime</button>
+            <button onclick="switchKTab('events'); toggleMobilePageMenu();" class="dock-page-item" id="mobile-item-events"><i class="fa-solid fa-list-check w-4"></i> Request Events</button>
+            <button onclick="switchKTab('workers'); toggleMobilePageMenu();" class="dock-page-item" id="mobile-item-workers"><i class="fa-solid fa-microchip w-4"></i> Voice Workers</button>
+            <button onclick="switchKTab('keys'); toggleMobilePageMenu();" class="dock-page-item" id="mobile-item-keys"><i class="fa-solid fa-key w-4"></i> API Keys</button>
+            <button onclick="switchKTab('settings'); toggleMobilePageMenu();" class="dock-page-item" id="mobile-item-settings"><i class="fa-solid fa-sliders w-4"></i> Settings</button>
+          </div>
+        </div>
       </div>
-      <div class="flex items-center space-x-2 bg-[#141622] border border-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
-        <i class="fa-regular fa-calendar text-[10px] text-slate-500"></i>
-        <span class="text-slate-500">Range:</span>
-        <select id="filterRange" onchange="onFilterChange()" class="bg-transparent text-slate-200 outline-none cursor-pointer text-xs">
-          <option value="24">Today (24h)</option>
-          <option value="48">Yesterday (48h)</option>
-          <option value="168">Last 7 Days</option>
-          <option value="720">Last 30 Days</option>
-        </select>
+
+      <!-- Filter dropdowns on right inside Dock -->
+      <div class="flex items-center space-x-2 text-xs">
+        <div class="flex items-center space-x-1.5 bg-[#17181d] border border-slate-700/60 px-3 py-1 rounded-full text-slate-300">
+          <i class="fa-solid fa-key text-[10px] text-slate-500"></i>
+          <span class="text-slate-500">Key:</span>
+          <select id="filterApiKey" onchange="onFilterChange()" class="bg-transparent text-slate-200 outline-none cursor-pointer text-xs max-w-[140px] truncate">
+            <option value="all">All Keys</option>
+          </select>
+        </div>
+        <div class="flex items-center space-x-1.5 bg-[#17181d] border border-slate-700/60 px-3 py-1 rounded-full text-slate-300">
+          <i class="fa-regular fa-calendar text-[10px] text-slate-500"></i>
+          <span class="text-slate-500">Range:</span>
+          <select id="filterRange" onchange="onFilterChange()" class="bg-transparent text-slate-200 outline-none cursor-pointer text-xs">
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+          </select>
+        </div>
+        <button onclick="refreshCurrentTab()" class="w-8 h-8 rounded-full bg-[#17181d] border border-slate-700/60 hover:border-slate-500 text-slate-300 hover:text-white flex items-center justify-center transition" title="Làm mới">
+          <i class="fa-solid fa-rotate-right text-xs" id="refreshIcon"></i>
+        </button>
       </div>
-      <button onclick="refreshCurrentTab()" class="w-8 h-8 rounded-lg bg-[#141622] border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition" title="Làm mới">
-        <i class="fa-solid fa-rotate-right text-xs" id="refreshIcon"></i>
-      </button>
     </div>
   </div>
 
@@ -133,7 +156,7 @@
               <i class="fa-solid fa-arrow-trend-up"></i>
             </div>
           </div>
-          <div class="h-16 mt-4 w-full">
+          <div class="k-sparkline-box">
             <canvas id="sparklineRequests"></canvas>
           </div>
         </div>
@@ -159,7 +182,7 @@
               <i class="fa-solid fa-cube"></i>
             </div>
           </div>
-          <div class="h-16 mt-4 w-full">
+          <div class="k-sparkline-box">
             <canvas id="sparklineTokens"></canvas>
           </div>
         </div>
@@ -179,7 +202,7 @@
           </div>
           <div class="text-2xl font-bold text-white mt-1 mono" id="valRPM">0.00 <span class="text-xs font-normal text-slate-400">req/m</span></div>
           <span class="text-[11px] text-slate-500 mt-0.5" id="valSubRPM">Window: 24h</span>
-          <div class="h-10 mt-2">
+          <div class="k-sparkline-box h-12">
             <canvas id="sparklineRPM"></canvas>
           </div>
         </div>
@@ -194,7 +217,7 @@
           </div>
           <div class="text-2xl font-bold text-white mt-1 mono" id="valTPM">0 <span class="text-xs font-normal text-slate-400">cpm</span></div>
           <span class="text-[11px] text-slate-500 mt-0.5" id="valSubTPM">TTS throughput</span>
-          <div class="h-10 mt-2">
+          <div class="k-sparkline-box h-12">
             <canvas id="sparklineTPM"></canvas>
           </div>
         </div>
@@ -209,7 +232,7 @@
           </div>
           <div class="text-2xl font-bold text-teal-400 mt-1 mono" id="valCacheRate">0.00%</div>
           <span class="text-[11px] text-slate-500 mt-0.5" id="valSubCache">SHA-256 Hit Quota Free</span>
-          <div class="h-10 mt-2">
+          <div class="k-sparkline-box h-12">
             <canvas id="sparklineCache"></canvas>
           </div>
         </div>
@@ -224,7 +247,7 @@
           </div>
           <div class="text-2xl font-bold text-amber-400 mt-1 mono" id="valCost">$0.00</div>
           <span class="text-[11px] text-slate-500 mt-0.5">Estimated Inference Value</span>
-          <div class="h-10 mt-2">
+          <div class="k-sparkline-box h-12">
             <canvas id="sparklineCost"></canvas>
           </div>
         </div>
@@ -268,12 +291,12 @@
               <span id="tokenHeatmapDetailSummary">0 chars input • 0 chars cache</span>
               <div class="flex items-center space-x-1.5">
                 <span>Less</span>
-                <span class="heat-cell" style="background-color: var(--token-level-0)"></span>
-                <span class="heat-cell" style="background-color: var(--token-level-1)"></span>
-                <span class="heat-cell" style="background-color: var(--token-level-2)"></span>
-                <span class="heat-cell" style="background-color: var(--token-level-3)"></span>
-                <span class="heat-cell" style="background-color: var(--token-level-4)"></span>
-                <span class="heat-cell" style="background-color: var(--token-level-5)"></span>
+                <span class="legend-cell" style="background-color: var(--token-level-0)"></span>
+                <span class="legend-cell" style="background-color: var(--token-level-1)"></span>
+                <span class="legend-cell" style="background-color: var(--token-level-2)"></span>
+                <span class="legend-cell" style="background-color: var(--token-level-3)"></span>
+                <span class="legend-cell" style="background-color: var(--token-level-4)"></span>
+                <span class="legend-cell" style="background-color: var(--token-level-5)"></span>
                 <span>More</span>
               </div>
             </div>
@@ -303,11 +326,11 @@
               </div>
               <div class="flex items-center space-x-1.5">
                 <span>Unhealthy</span>
-                <span class="heat-cell" style="background-color: var(--health-level-1)"></span>
-                <span class="heat-cell" style="background-color: var(--health-level-2)"></span>
-                <span class="heat-cell" style="background-color: var(--health-level-3)"></span>
-                <span class="heat-cell" style="background-color: var(--health-level-4)"></span>
-                <span class="heat-cell" style="background-color: var(--health-level-5)"></span>
+                <span class="legend-cell" style="background-color: var(--health-level-1)"></span>
+                <span class="legend-cell" style="background-color: var(--health-level-2)"></span>
+                <span class="legend-cell" style="background-color: var(--health-level-3)"></span>
+                <span class="legend-cell" style="background-color: var(--health-level-4)"></span>
+                <span class="legend-cell" style="background-color: var(--health-level-5)"></span>
                 <span>Healthy</span>
               </div>
             </div>
@@ -333,7 +356,7 @@
             </div>
           </div>
 
-          <div class="h-72 w-full">
+          <div class="chart-container-full h-72">
             <canvas id="chartTrendsMain"></canvas>
           </div>
 
@@ -345,7 +368,171 @@
     </div>
 
     <!-- ========================================================================= -->
-    <!-- TAB 2: REALTIME -->
+    <!-- TAB 2: ANALYSIS -->
+    <!-- ========================================================================= -->
+    <div id="content-analysis" class="hidden space-y-6">
+
+      <!-- CARD 1: TOKEN / TTS CHARACTER USAGE OVER TIME -->
+      <div class="k-card p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-sm font-bold text-white tracking-tight">Token / TTS Character Usage Over Time</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Input characters, raw inference, and cached characters with request and cost trends.</p>
+          </div>
+        </div>
+
+        <!-- Summary stats dl row matching Keeper -->
+        <div class="analysis-summary-bar">
+          <div class="analysis-summary-item">
+            <span class="analysis-summary-label">Total Characters</span>
+            <span class="analysis-summary-value text-white" id="analysisTotalTokens">0</span>
+          </div>
+          <div class="analysis-summary-item">
+            <span class="analysis-summary-label">Total Cost</span>
+            <span class="analysis-summary-value text-emerald-400" id="analysisTotalCost">$0.00</span>
+          </div>
+          <div class="analysis-summary-item">
+            <span class="analysis-summary-label">Cost / 1M Characters</span>
+            <span class="analysis-summary-value text-slate-300" id="analysisCostPerMillion">$0.1500</span>
+          </div>
+        </div>
+
+        <!-- Legend Bar matching Keeper -->
+        <div class="analysis-chart-legend">
+          <span class="analysis-legend-pill"><span class="analysis-legend-dot bg-[#2563eb]"></span>Input</span>
+          <span class="analysis-legend-pill"><span class="analysis-legend-dot bg-[#16a34a]"></span>Raw Inference</span>
+          <span class="analysis-legend-pill"><span class="analysis-legend-dot bg-[#d97706]"></span>Cache Read</span>
+          <span class="analysis-legend-pill"><span class="analysis-legend-dot bg-[#ff5a40]"></span>Requests</span>
+          <span class="analysis-legend-pill"><span class="analysis-legend-dot bg-[#14b8a6]"></span>Total Cost</span>
+          <span class="analysis-legend-pill"><span class="analysis-legend-dot bg-slate-400"></span><span id="analysisAverageLabel">Average: 0</span></span>
+        </div>
+
+        <div class="chart-container-full h-80">
+          <canvas id="chartTokenUsageAnalysis"></canvas>
+        </div>
+      </div>
+
+      <!-- ROW 2: USAGE DISTRIBUTION & TOP MODELS (2 COLUMNS) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Usage Distribution -->
+        <div class="k-card p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div>
+                <h4 class="text-xs font-bold text-white">Usage Distribution</h4>
+                <p class="text-[11px] text-slate-400 mt-0.5">Switch dimensions to compare character share and request volume.</p>
+              </div>
+              <div class="flex items-center bg-[#1f2127] border border-slate-800 rounded-lg p-0.5 text-xs">
+                <button onclick="setAnalysisDimension('keys')" id="analysisDimBtnKeys" class="px-2.5 py-1 rounded bg-slate-800 text-white font-medium">API Key</button>
+                <button onclick="setAnalysisDimension('models')" id="analysisDimBtnModels" class="px-2.5 py-1 text-slate-400 hover:text-white">Model</button>
+                <button onclick="setAnalysisDimension('users')" id="analysisDimBtnUsers" class="px-2.5 py-1 text-slate-400 hover:text-white">User</button>
+              </div>
+            </div>
+
+            <div class="h-64 flex items-center justify-center relative my-2">
+              <canvas id="chartAnalysisComposition"></canvas>
+            </div>
+
+            <div id="analysisCompositionList" class="space-y-2 mt-4 max-h-56 overflow-y-auto"></div>
+          </div>
+        </div>
+
+        <!-- Top Models -->
+        <div class="k-card p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <h4 class="text-xs font-bold text-white">Top Models</h4>
+                <p class="text-[11px] text-slate-400 mt-0.5">Compare total character usage by model across the selected time range.</p>
+              </div>
+              <div class="text-xs text-slate-400">
+                Total: <b class="text-white mono" id="analysisTopModelsTotal">0</b>
+              </div>
+            </div>
+
+            <div class="chart-container-full h-64 my-2">
+              <canvas id="chartAnalysisTopModels"></canvas>
+            </div>
+
+            <div id="analysisTopModelsList" class="space-y-2 mt-4 max-h-56 overflow-y-auto"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD 3: LATENCY DIAGNOSTICS (SCATTER PLOT) -->
+      <div class="k-card p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <h4 class="text-xs font-bold text-white">Latency Diagnostics</h4>
+            <p class="text-[11px] text-slate-400 mt-0.5">Processing latency by request sample and character length.</p>
+          </div>
+          <div class="flex items-center space-x-3 text-xs">
+            <span class="metric-chip">p95 Latency: <b class="text-amber-400 ml-1 mono" id="analysisP95Latency">0ms</b></span>
+            <span class="metric-chip">Avg: <b class="text-blue-400 ml-1 mono" id="analysisAvgLatency">0ms</b></span>
+            <span class="metric-chip">Samples: <b class="text-emerald-400 ml-1 mono" id="analysisSamples">0</b></span>
+          </div>
+        </div>
+        <div class="chart-container-full h-72">
+          <canvas id="chartAnalysisLatency"></canvas>
+        </div>
+      </div>
+
+      <!-- ROW 4: MODEL SPEED & MODEL EFFICIENCY -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="k-card p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <h4 class="text-xs font-bold text-white">Model Speed</h4>
+                <p class="text-[11px] text-slate-400 mt-0.5">Average end-to-end output speed (characters / second).</p>
+              </div>
+            </div>
+            <div class="chart-container-full h-64">
+              <canvas id="chartAnalysisSpeed"></canvas>
+            </div>
+          </div>
+          <div id="analysisSpeedLegend" class="mt-4 pt-3 border-t border-slate-800/80 flex flex-wrap gap-4 text-xs"></div>
+        </div>
+
+        <div class="k-card p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <h4 class="text-xs font-bold text-white">Model Efficiency</h4>
+                <p class="text-[11px] text-slate-400 mt-0.5">Estimated cost per 1M characters by worker model.</p>
+              </div>
+            </div>
+            <div class="chart-container-full h-64 flex items-center justify-center">
+              <canvas id="chartAnalysisEfficiency"></canvas>
+            </div>
+          </div>
+          <div id="analysisEfficiencyLegend" class="mt-4 pt-3 border-t border-slate-800/80 text-xs text-slate-400 flex justify-between">
+            <span>Cost per 1M characters: $0.1500</span>
+            <span class="text-emerald-400 font-mono">100% Efficiency Target</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD 5: API KEY & MODELS HEATMAP -->
+      <div class="k-card p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h4 class="text-xs font-bold text-white">API Key & Models Heatmap</h4>
+            <p class="text-xs text-slate-400 mt-0.5">Character distribution across API keys and models with hover details.</p>
+          </div>
+          <div class="flex items-center space-x-2 text-xs">
+            <span class="text-slate-400">Low</span>
+            <div class="w-24 h-2.5 rounded-full bg-gradient-to-r from-[#262932] via-[#2563eb] to-[#ef4444]"></div>
+            <span class="text-slate-400">High</span>
+          </div>
+        </div>
+        <div id="analysisHeatmapMatrixContainer" class="heatmap-matrix-wrapper"></div>
+      </div>
+
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- TAB 3: REALTIME -->
     <!-- ========================================================================= -->
     <div id="content-realtime" class="hidden space-y-6">
       <div class="flex items-center justify-between">
@@ -888,8 +1075,8 @@
   </main>
 
   <!-- FOOTER -->
-  <footer class="border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500 bg-[#0a0b0f] flex flex-wrap items-center justify-between gap-2">
-    <span>© 2026 VoiceCloner AI Platform • Central Management Gateway (CLIProxyAPI / KEEPER Inspired)</span>
+  <footer class="border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500 bg-[#111215] flex flex-wrap items-center justify-between gap-2">
+    <span>© 2026 VoiceCloner AI Platform • Central AI Voice Gateway Management Console</span>
     <span class="mono text-[11px] text-slate-600">Proxy Gateway: Active • Port 8000</span>
   </footer>
 
@@ -1077,6 +1264,6 @@
     </div>
   </div>
 
-  <script src="/static/dashboard/app.js"></script>
+  <script src="/static/dashboard/app.js?v=2.0.1"></script>
 </body>
 </html>

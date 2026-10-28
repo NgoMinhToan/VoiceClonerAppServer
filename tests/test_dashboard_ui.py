@@ -26,7 +26,7 @@ def test_dashboard_styles_contains_keeper_classes():
     assert ".k-glow-blue" in css
     assert ".heat-cell" in css
 
-def test_dashboard_html_contains_six_keeper_tabs():
+def test_dashboard_html_contains_keeper_tabs():
     from pathlib import Path
     html_path = Path("VoiceClonerAppServer/static/dashboard/index.html")
     if not html_path.exists():
@@ -34,14 +34,17 @@ def test_dashboard_html_contains_six_keeper_tabs():
     html = html_path.read_text(encoding="utf-8")
     assert "VOICE CLONER" in html
     assert "tab-btn-overview" in html
+    assert "tab-btn-analysis" in html
     assert "tab-btn-realtime" in html
     assert "tab-btn-events" in html
     assert "tab-btn-workers" in html
     assert "tab-btn-keys" in html
     assert "tab-btn-settings" in html
+    assert "chartTokenUsageAnalysis" in html
+    assert "chartAnalysisComposition" in html
     assert "maxPreviewCharLimitInput" in html
     assert "maxSpeechCharLimitInput" in html
-    assert "tab-btn-analysis" not in html
+    assert "CLIProxyAPI" not in html
     assert "tab-btn-ranking" not in html
 
 def test_dashboard_js_implements_keeper_logic():
@@ -54,6 +57,9 @@ def test_dashboard_js_implements_keeper_logic():
     assert "initSparklines" in js
     assert "initHeatmaps" in js
     assert "chartTrendsMain" in js
+    assert "initAnalysisTokenUsageChart" in js
+    assert "initAnalysisCompositionChart" in js
+    assert "initAnalysisLatencyChart" in js
     assert "saveSystemSettings" in js
 
 

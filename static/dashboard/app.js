@@ -12,6 +12,7 @@ let eventsCurrentPage = 1;
 let eventsPageSize = 25;
 let eventsSearchKeyword = '';
 let currentActiveDimension = 'models';
+let currentAnalysisDimension = 'keys'; // 'keys' | 'models' | 'users'
 
 // Chart instance tracking for safe destroy/re-render lifecycle
 const charts = {
@@ -26,6 +27,12 @@ const charts = {
   outcomes: null,
   composition: null,
   latencyRealtime: null,
+  tokenUsageAnalysis: null,
+  analysisComposition: null,
+  analysisTopModels: null,
+  analysisLatency: null,
+  analysisSpeed: null,
+  analysisEfficiency: null,
 };
 
 function getManagementKey() {
@@ -76,13 +83,36 @@ async function apiRequest(endpoint, options = {}) {
 
 // ── NAVIGATION & TAB SWITCHING ──
 
+function toggleMobilePageMenu() {
+  const dd = document.getElementById('dockMobileDropdown');
+  if (dd) dd.classList.toggle('hidden');
+}
+
 function switchKTab(tab) {
   currentKTab = tab;
   document.querySelectorAll('.k-tab-btn').forEach(b => b.classList.remove('active'));
   const activeBtn = document.getElementById(`tab-btn-${tab}`);
   if (activeBtn) activeBtn.classList.add('active');
 
-  const tabs = ['overview', 'realtime', 'events', 'workers', 'keys', 'settings'];
+  const mobileLabel = document.getElementById('dockMobileActiveLabel');
+  if (mobileLabel) {
+    const tabNames = {
+      'overview': 'Overview',
+      'analysis': 'Analysis',
+      'realtime': 'Realtime',
+      'events': 'Request Events',
+      'workers': 'Voice Workers',
+      'keys': 'API Keys',
+      'settings': 'Settings',
+    };
+    mobileLabel.textContent = tabNames[tab] || tab;
+  }
+
+  document.querySelectorAll('.dock-page-item').forEach(item => item.classList.remove('active'));
+  const activeMobileItem = document.getElementById(`mobile-item-${tab}`);
+  if (activeMobileItem) activeMobileItem.classList.add('active');
+
+  const tabs = ['overview', 'analysis', 'realtime', 'events', 'workers', 'keys', 'settings'];
   tabs.forEach(t => {
     const el = document.getElementById(`content-${t}`);
     if (el) el.classList.add('hidden');
@@ -92,6 +122,7 @@ function switchKTab(tab) {
   if (target) target.classList.remove('hidden');
 
   if (tab === 'overview') fetchMetrics();
+  else if (tab === 'analysis') fetchAnalysis();
   else if (tab === 'realtime') fetchRealtimeMetrics();
   else if (tab === 'events') {
     populateEventsFilterDropdowns();
@@ -154,12 +185,12 @@ function onAutoRefreshChange() {
 
 const commonTooltipConfig = {
   enabled: true,
-  backgroundColor: '#262320',
-  borderColor: '#3a3530',
+  backgroundColor: '#1c1e24',
+  borderColor: '#2e313a',
   borderWidth: 1,
-  titleColor: '#f6f4f1',
+  titleColor: '#f8fafc',
   titleFont: { size: 12, weight: 'bold' },
-  bodyColor: '#c9c3bb',
+  bodyColor: '#cbd5e1',
   bodyFont: { size: 11, family: 'JetBrains Mono' },
   padding: 10,
   cornerRadius: 8,
@@ -167,18 +198,33 @@ const commonTooltipConfig = {
   boxPadding: 4,
 };
 
-// Helper to position tooltip safely
+const sparklineTooltipConfig = {
+  ...commonTooltipConfig,
+  yAlign: 'bottom',
+  caretPadding: 8,
+  padding: 6,
+  bodyFont: { size: 10, family: 'JetBrains Mono' },
+  titleFont: { size: 11, weight: 'bold' },
+};
+
+// Helper to position tooltip safely without covering cursor or cell (fixed viewport coordinates)
 function positionTooltip(e, tooltip) {
   const rect = e.target.getBoundingClientRect();
-  const tooltipWidth = tooltip.offsetWidth || 200;
-  let left = rect.left + window.scrollX - tooltipWidth / 2 + rect.width / 2;
-  left = Math.max(10, Math.min(left, window.innerWidth - tooltipWidth - 10));
-  let top = rect.top + window.scrollY - 55;
-  if (rect.top < 60) {
-    top = rect.bottom + window.scrollY + 10;
+  const tooltipWidth = tooltip.offsetWidth || 240;
+  const tooltipHeight = tooltip.offsetHeight || 75;
+
+  let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+  left = Math.max(12, Math.min(left, window.innerWidth - tooltipWidth - 12));
+
+  let top;
+  if (rect.top >= tooltipHeight + 16) {
+    top = rect.top - tooltipHeight - 12;
+  } else {
+    top = rect.bottom + 12;
   }
-  tooltip.style.left = `${left}px`;
-  tooltip.style.top = `${top}px`;
+
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(top)}px`;
 }
 
 // ── OVERVIEW TAB METRICS & CHARTS ──
@@ -186,11 +232,31 @@ function positionTooltip(e, tooltip) {
 async function fetchMetrics(isSilent = false) {
   try {
     const rangeSelect = document.getElementById('filterRange');
-    const hours = rangeSelect ? rangeSelect.value : '24';
+    const rangeVal = rangeSelect ? rangeSelect.value : 'today';
     const keySelect = document.getElementById('filterApiKey');
     const selectedKey = keySelect ? keySelect.value : 'all';
 
-    let url = `/v1/management/metrics/summary?hours=${hours}`;
+    let hours = 24;
+    let rangeType = 'today';
+    if (rangeVal === 'today' || rangeVal === '24') {
+      hours = 24;
+      rangeType = 'today';
+    } else if (rangeVal === 'yesterday' || rangeVal === '48') {
+      hours = 48;
+      rangeType = 'yesterday';
+    } else if (rangeVal === '7d' || rangeVal === '168') {
+      hours = 168;
+      rangeType = '7d';
+    } else if (rangeVal === '30d' || rangeVal === '720') {
+      hours = 720;
+      rangeType = '30d';
+    } else {
+      hours = parseInt(rangeVal, 10) || 24;
+      rangeType = 'custom';
+    }
+
+    const tzOffset = new Date().getTimezoneOffset();
+    let url = `/v1/management/metrics/summary?hours=${hours}&range_type=${rangeType}&tz_offset_minutes=${tzOffset}`;
     if (selectedKey && selectedKey !== 'all') {
       url += `&key_name=${encodeURIComponent(selectedKey)}`;
     }
@@ -280,6 +346,10 @@ async function fetchMetrics(isSilent = false) {
     initHeatmaps(data);
     initMainTrendsChart(data);
 
+    if (data.analysis) {
+      renderAnalysisTab(data.analysis, data);
+    }
+
     // Sync Key filter options if needed
     if (keySelect && data.usage_by_key) {
       const currentVal = keySelect.value;
@@ -304,11 +374,11 @@ function renderMetricsCharts(data) {
 }
 
 function initSparklines(data) {
-  const buckets = (data?.time_buckets && data.time_buckets.length === 32)
+  const buckets = (data?.time_buckets && data.time_buckets.length > 0)
     ? data.time_buckets
-    : Array.from({ length: 32 }, (_, i) => ({
+    : Array.from({ length: 24 }, (_, i) => ({
         index: i,
-        label: `${String(Math.floor((i / 32) * 24)).padStart(2, '0')}:00`,
+        label: `${String(i).padStart(2, '0')}:00`,
         requests: 0,
         chars: 0,
         cache_hits: 0,
@@ -346,7 +416,7 @@ function initSparklines(data) {
         plugins: {
           legend: { display: false },
           tooltip: {
-            ...commonTooltipConfig,
+            ...sparklineTooltipConfig,
             callbacks: {
               title: (items) => `Mốc: ${items[0].label}`,
               label: (item) => ` Requests: ${item.raw} reqs`,
@@ -386,7 +456,7 @@ function initSparklines(data) {
         plugins: {
           legend: { display: false },
           tooltip: {
-            ...commonTooltipConfig,
+            ...sparklineTooltipConfig,
             callbacks: {
               title: (items) => `Mốc: ${items[0].label}`,
               label: (item) => ` Khối lượng: ${Number(item.raw).toFixed(4)}M chars`,
@@ -399,18 +469,16 @@ function initSparklines(data) {
   }
 
   // 3. RPM Sparkline
-  const recent12 = buckets.slice(-16);
-  const recentLabels = recent12.map(b => b.label);
-  const bucketMin = Math.max(1, (24 * 60) / 32);
+  const bucketMin = Math.max(1, (24 * 60) / Math.max(1, buckets.length));
 
   const ctxRPM = document.getElementById('sparklineRPM');
   if (ctxRPM) {
     if (charts.sparklineRPM) charts.sparklineRPM.destroy();
-    const rpmData = recent12.map(b => Number((b.requests / bucketMin).toFixed(2)));
+    const rpmData = buckets.map(b => Number((b.requests / bucketMin).toFixed(2)));
     charts.sparklineRPM = new Chart(ctxRPM, {
       type: 'line',
       data: {
-        labels: recentLabels,
+        labels: timeLabels,
         datasets: [{
           data: rpmData,
           borderColor: '#10b981',
@@ -429,8 +497,11 @@ function initSparklines(data) {
         plugins: {
           legend: { display: false },
           tooltip: {
-            ...commonTooltipConfig,
-            callbacks: { label: (i) => ` RPM: ${Number(i.raw).toFixed(2)} req/m` },
+            ...sparklineTooltipConfig,
+            callbacks: {
+              title: (items) => `Mốc: ${items[0].label}`,
+              label: (i) => ` RPM: ${Number(i.raw).toFixed(2)} req/m`,
+            },
           },
         },
         scales: { x: { display: false }, y: { display: false } },
@@ -442,11 +513,11 @@ function initSparklines(data) {
   const ctxTPM = document.getElementById('sparklineTPM');
   if (ctxTPM) {
     if (charts.sparklineTPM) charts.sparklineTPM.destroy();
-    const tpmData = recent12.map(b => Math.round(b.chars / bucketMin));
+    const tpmData = buckets.map(b => Math.round(b.chars / bucketMin));
     charts.sparklineTPM = new Chart(ctxTPM, {
       type: 'line',
       data: {
-        labels: recentLabels,
+        labels: timeLabels,
         datasets: [{
           data: tpmData,
           borderColor: '#f97316',
@@ -465,8 +536,11 @@ function initSparklines(data) {
         plugins: {
           legend: { display: false },
           tooltip: {
-            ...commonTooltipConfig,
-            callbacks: { label: (i) => ` CPM: ${Math.round(i.raw).toLocaleString()} cpm` },
+            ...sparklineTooltipConfig,
+            callbacks: {
+              title: (items) => `Mốc: ${items[0].label}`,
+              label: (i) => ` CPM: ${Math.round(i.raw).toLocaleString()} cpm`,
+            },
           },
         },
         scales: { x: { display: false }, y: { display: false } },
@@ -478,11 +552,11 @@ function initSparklines(data) {
   const ctxCache = document.getElementById('sparklineCache');
   if (ctxCache) {
     if (charts.sparklineCache) charts.sparklineCache.destroy();
-    const cacheData = recent12.map(b => b.requests > 0 ? Number(((b.cache_hits / b.requests) * 100).toFixed(1)) : 0);
+    const cacheData = buckets.map(b => b.requests > 0 ? Number(((b.cache_hits / b.requests) * 100).toFixed(1)) : 0);
     charts.sparklineCache = new Chart(ctxCache, {
       type: 'line',
       data: {
-        labels: recentLabels,
+        labels: timeLabels,
         datasets: [{
           data: cacheData,
           borderColor: '#14b8a6',
@@ -501,8 +575,11 @@ function initSparklines(data) {
         plugins: {
           legend: { display: false },
           tooltip: {
-            ...commonTooltipConfig,
-            callbacks: { label: (i) => ` Tỷ lệ cache: ${i.raw}%` },
+            ...sparklineTooltipConfig,
+            callbacks: {
+              title: (items) => `Mốc: ${items[0].label}`,
+              label: (i) => ` Tỷ lệ cache: ${i.raw}%`,
+            },
           },
         },
         scales: { x: { display: false }, y: { display: false } },
@@ -514,11 +591,11 @@ function initSparklines(data) {
   const ctxCost = document.getElementById('sparklineCost');
   if (ctxCost) {
     if (charts.sparklineCost) charts.sparklineCost.destroy();
-    const costData = recent12.map(b => Number(((b.chars / 1000000) * 0.15).toFixed(4)));
+    const costData = buckets.map(b => Number(((b.chars / 1000000) * 0.15).toFixed(4)));
     charts.sparklineCost = new Chart(ctxCost, {
       type: 'line',
       data: {
-        labels: recentLabels,
+        labels: timeLabels,
         datasets: [{
           data: costData,
           borderColor: '#f59e0b',
@@ -537,8 +614,11 @@ function initSparklines(data) {
         plugins: {
           legend: { display: false },
           tooltip: {
-            ...commonTooltipConfig,
-            callbacks: { label: (i) => ` Chi phí: $${Number(i.raw).toFixed(4)}` },
+            ...sparklineTooltipConfig,
+            callbacks: {
+              title: (items) => `Mốc: ${items[0].label}`,
+              label: (i) => ` Chi phí: $${Number(i.raw).toFixed(4)}`,
+            },
           },
         },
         scales: { x: { display: false }, y: { display: false } },
@@ -575,54 +655,32 @@ function initHeatmaps(data) {
   const elSummary = document.getElementById('heatmapTotalSummary');
   if (elSummary) elSummary.textContent = `${totalChars.toLocaleString()} Chars`;
 
-  const rawBuckets = data?.time_buckets || [];
-  const numColumns = activityWindow === 'day' ? 24 : 28;
-  const totalCells = numColumns * 7;
-
-  // Window range label
+  // Window range label aligned to current selected calendar bounds
   const winLabel = document.getElementById('activityWindowLabel');
   if (winLabel) {
-    const now = new Date();
-    const past = new Date(now.getTime() - (activityWindow === 'day' ? 24 : 168) * 3600 * 1000);
-    const fmt = d => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    winLabel.textContent = `${fmt(past)} – ${fmt(now)}`;
+    if (data?.window_start && data?.window_end) {
+      winLabel.textContent = `${data.window_start} – ${data.window_end}`;
+    } else {
+      const now = new Date();
+      const past = new Date(now.getTime() - (activityWindow === 'day' ? 24 : 168) * 3600 * 1000);
+      const fmt = d => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      winLabel.textContent = `${fmt(past)} – ${fmt(now)}`;
+    }
   }
 
-  // Generate 7-row discrete time cells matching Keeper
-  // Distribute bucket traffic evenly across discrete cells
-  const activityCells = [];
-  const baseBucketCount = rawBuckets.length || 32;
-
-  for (let i = 0; i < totalCells; i++) {
-    const col = Math.floor(i / 7);
-    const row = i % 7;
-    const bucketIdx = Math.floor((i / totalCells) * baseBucketCount);
-    const sourceBucket = rawBuckets[bucketIdx] || { requests: 0, chars: 0, success_requests: 0, failed_requests: 0, avg_latency_ms: 0, label: '--:--' };
-
-    // Subdivide bucket values into this cell slot
-    const subFactor = baseBucketCount / totalCells;
-    const cellChars = Math.round(sourceBucket.chars * subFactor);
-    const cellReqs = Math.max(0, Math.round(sourceBucket.requests * subFactor));
-    const cellSuccess = Math.max(0, Math.round(sourceBucket.success_requests * subFactor));
-    const cellFailed = Math.max(0, Math.round(sourceBucket.failed_requests * subFactor));
-
-    // Time label calculation
-    const minutesPerCell = ((activityWindow === 'day' ? 24 : 168) * 60) / totalCells;
-    const cellMinuteOffset = Math.round(i * minutesPerCell);
-    const cellTime = new Date(Date.now() - ((activityWindow === 'day' ? 24 : 168) * 60 - cellMinuteOffset) * 60 * 1000);
-    const cellTimeLabel = `${String(cellTime.getMonth() + 1).padStart(2, '0')}/${String(cellTime.getDate()).padStart(2, '0')} ${String(cellTime.getHours()).padStart(2, '0')}:${String(cellTime.getMinutes()).padStart(2, '0')}`;
-
-    activityCells.push({
-      index: i,
-      col,
-      row,
-      timeLabel: cellTimeLabel,
-      chars: cellChars,
-      requests: cellReqs,
-      success: cellSuccess,
-      failed: cellFailed,
-      latency: sourceBucket.avg_latency_ms || 0,
-    });
+  // 364 discrete blocks (52 columns x 7 rows) exactly matching cpa-usage-keeper
+  let activityCells = data?.activity_blocks || [];
+  if (activityCells.length === 0) {
+    activityCells = Array.from({ length: 364 }, (_, idx) => ({
+      index: idx,
+      time_label: `--:--`,
+      requests: 0,
+      success: 0,
+      failed: 0,
+      chars: 0,
+      cached_chars: 0,
+      latency: 0.0,
+    }));
   }
 
   // 1. Token Activity Heatmap
@@ -658,7 +716,7 @@ function initHeatmaps(data) {
       cellEl.addEventListener('mouseenter', (e) => {
         tooltip.style.display = 'block';
         tooltip.innerHTML = `
-          <div class="text-blue-400 font-bold mb-1">${cell.timeLabel}</div>
+          <div class="text-blue-400 font-bold mb-1">${cell.time_label || cell.timeLabel}</div>
           <div class="text-slate-300">Khối lượng: <b class="text-white mono">${cell.chars.toLocaleString()} chars</b></div>
           <div class="text-slate-300">Yêu cầu: <b class="text-white mono">${cell.requests} reqs</b></div>
         `;
@@ -712,7 +770,7 @@ function initHeatmaps(data) {
         const titleColor = healthLevel >= 4 ? 'text-emerald-400' : (healthLevel > 0 ? 'text-rose-400' : 'text-slate-400');
 
         tooltip.innerHTML = `
-          <div class="${titleColor} font-bold mb-1">${cell.timeLabel} (${rateText})</div>
+          <div class="${titleColor} font-bold mb-1">${cell.time_label || cell.timeLabel} (${rateText})</div>
           <div class="text-slate-300">Thành công: <b class="text-emerald-400 mono">${cell.success}</b> | Lỗi: <b class="text-rose-400 mono">${cell.failed}</b></div>
           <div class="text-slate-300">Độ trễ trung bình: <b class="text-amber-400 mono">${cell.latency}ms</b></div>
         `;
@@ -781,8 +839,14 @@ function initMainTrendsChart(data) {
         },
       },
       scales: {
-        x: { grid: { color: 'rgba(255, 255, 255, 0.04)' }, ticks: { color: '#64748b' } },
+        x: {
+          offset: false,
+          bounds: 'data',
+          grid: { color: 'rgba(255, 255, 255, 0.04)' },
+          ticks: { color: '#64748b' },
+        },
         y: {
+          beginAtZero: true,
           grid: { color: 'rgba(255, 255, 255, 0.04)' },
           ticks: { color: '#64748b', callback: v => `${v}M` },
         },
@@ -817,6 +881,681 @@ function initMainTrendsChart(data) {
       `;
     }).join('');
   }
+}
+
+// ── HELPER FUNCTIONS ──
+function formatCompactNumber(num) {
+  const n = Number(num || 0);
+  if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+  if (Math.abs(n) >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+
+// ── ANALYSIS TAB CONTROLLER & CHARTS ──
+
+async function fetchAnalysis(isSilent = false) {
+  try {
+    const rangeSelect = document.getElementById('filterRange');
+    const rangeVal = rangeSelect ? rangeSelect.value : 'today';
+    const keySelect = document.getElementById('filterApiKey');
+    const selectedKey = keySelect ? keySelect.value : 'all';
+
+    let hours = 24;
+    let rangeType = 'today';
+    if (rangeVal === 'today' || rangeVal === '24') {
+      hours = 24; rangeType = 'today';
+    } else if (rangeVal === 'yesterday' || rangeVal === '48') {
+      hours = 48; rangeType = 'yesterday';
+    } else if (rangeVal === '7d' || rangeVal === '168') {
+      hours = 168; rangeType = '7d';
+    } else if (rangeVal === '30d' || rangeVal === '720') {
+      hours = 720; rangeType = '30d';
+    } else {
+      hours = parseInt(rangeVal, 10) || 24;
+      rangeType = 'custom';
+    }
+
+    const tzOffset = new Date().getTimezoneOffset();
+    let url = `/v1/management/metrics/summary?hours=${hours}&range_type=${rangeType}&tz_offset_minutes=${tzOffset}`;
+    if (selectedKey && selectedKey !== 'all') {
+      url += `&key_name=${encodeURIComponent(selectedKey)}`;
+    }
+
+    const res = await apiRequest(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    activeMetricsData = data;
+
+    if (data.analysis) {
+      renderAnalysisTab(data.analysis, data);
+    }
+  } catch (err) {
+    console.error('fetchAnalysis failed', err);
+  }
+}
+
+function setAnalysisDimension(dim) {
+  currentAnalysisDimension = dim;
+  ['keys', 'models', 'users'].forEach(d => {
+    const btn = document.getElementById(`analysisDimBtn${d.charAt(0).toUpperCase() + d.slice(1)}`);
+    if (btn) {
+      if (d === dim) {
+        btn.className = 'px-2.5 py-1 rounded bg-slate-800 text-white font-medium';
+      } else {
+        btn.className = 'px-2.5 py-1 text-slate-400 hover:text-white';
+      }
+    }
+  });
+
+  if (activeMetricsData?.analysis) {
+    initAnalysisCompositionChart(activeMetricsData.analysis, dim);
+  }
+}
+
+function renderAnalysisTab(analysis, rootData) {
+  if (!analysis) return;
+
+  const totalChars = analysis.cost_summary?.total_tokens ?? (rootData?.total_chars || 0);
+  const totalCost = analysis.cost_summary?.total_cost_usd ?? ((totalChars / 1_000_000) * 0.15);
+
+  const elTotalTokens = document.getElementById('analysisTotalTokens');
+  if (elTotalTokens) elTotalTokens.textContent = formatCompactNumber(totalChars);
+
+  const elTotalCost = document.getElementById('analysisTotalCost');
+  if (elTotalCost) elTotalCost.textContent = `$${Number(totalCost).toFixed(2)}`;
+
+  const elCostPerMillion = document.getElementById('analysisCostPerMillion');
+  if (elCostPerMillion) elCostPerMillion.textContent = `$${(0.15).toFixed(4)}`;
+
+  const bucketCount = analysis.token_usage?.length || 1;
+  const avgChars = Math.round(totalChars / bucketCount);
+  const elAvgLabel = document.getElementById('analysisAverageLabel');
+  if (elAvgLabel) elAvgLabel.textContent = `Average: ${formatCompactNumber(avgChars)}`;
+
+  initAnalysisTokenUsageChart(analysis);
+  initAnalysisCompositionChart(analysis, currentAnalysisDimension);
+  initAnalysisTopModelsChart(analysis);
+  initAnalysisLatencyChart(analysis);
+  initAnalysisModelSpeedChart(analysis);
+  initAnalysisEfficiencyChart(analysis);
+  initAnalysisHeatmapMatrix(analysis);
+}
+
+// 1. Token / TTS Character Usage Over Time
+function initAnalysisTokenUsageChart(analysis) {
+  const ctx = document.getElementById('chartTokenUsageAnalysis');
+  if (!ctx) return;
+  if (charts.tokenUsageAnalysis) charts.tokenUsageAnalysis.destroy();
+
+  const tokenUsage = analysis.token_usage || [];
+  const labels = tokenUsage.map(t => t.bucket);
+  const inputTokens = tokenUsage.map(t => t.input_tokens);
+  const outputTokens = tokenUsage.map(t => t.output_tokens);
+  const cacheReadTokens = tokenUsage.map(t => t.cache_read_tokens);
+  const reqs = tokenUsage.map(t => t.requests);
+  const costs = tokenUsage.map(t => t.cost_usd);
+
+  charts.tokenUsageAnalysis = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Input Chars',
+          data: inputTokens,
+          backgroundColor: '#2563eb',
+          stack: 'tokens',
+          yAxisID: 'tokens',
+          barPercentage: 0.8,
+          categoryPercentage: 0.8,
+          borderRadius: 2,
+        },
+        {
+          label: 'Raw Inference',
+          data: outputTokens,
+          backgroundColor: '#16a34a',
+          stack: 'tokens',
+          yAxisID: 'tokens',
+          barPercentage: 0.8,
+          categoryPercentage: 0.8,
+          borderRadius: 2,
+        },
+        {
+          label: 'Cache Read',
+          data: cacheReadTokens,
+          backgroundColor: '#d97706',
+          stack: 'tokens',
+          yAxisID: 'tokens',
+          barPercentage: 0.8,
+          categoryPercentage: 0.8,
+          borderRadius: 2,
+        },
+        {
+          type: 'line',
+          label: 'Requests',
+          data: reqs,
+          borderColor: '#ff5a40',
+          backgroundColor: '#ff5a40',
+          borderWidth: 2,
+          borderDash: [5, 4],
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          tension: 0.35,
+          yAxisID: 'requests',
+        },
+        {
+          type: 'line',
+          label: 'Estimated Cost ($)',
+          data: costs,
+          borderColor: '#14b8a6',
+          backgroundColor: '#14b8a6',
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          tension: 0.35,
+          yAxisID: 'cost',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...commonTooltipConfig,
+          callbacks: {
+            title: (items) => `Mốc: ${items[0].label}`,
+            label: (item) => {
+              const label = item.dataset.label || '';
+              if (item.dataset.yAxisID === 'cost') {
+                return ` ${label}: $${Number(item.raw).toFixed(4)}`;
+              } else if (item.dataset.yAxisID === 'requests') {
+                return ` ${label}: ${Number(item.raw).toLocaleString()} reqs`;
+              }
+              return ` ${label}: ${formatCompactNumber(item.raw)} chars (${Number(item.raw).toLocaleString()})`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: { color: '#94a3b8', font: { size: 10 } },
+        },
+        tokens: {
+          type: 'linear',
+          position: 'left',
+          stacked: true,
+          beginAtZero: true,
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: {
+            color: '#94a3b8',
+            font: { size: 10 },
+            callback: (v) => formatCompactNumber(v),
+          },
+        },
+        requests: {
+          type: 'linear',
+          position: 'right',
+          beginAtZero: true,
+          grid: { drawOnChartArea: false },
+          ticks: {
+            color: '#ff5a40',
+            font: { size: 10 },
+            callback: (v) => `${v}`,
+          },
+        },
+        cost: {
+          type: 'linear',
+          position: 'right',
+          beginAtZero: true,
+          grid: { drawOnChartArea: false },
+          ticks: {
+            color: '#14b8a6',
+            font: { size: 10 },
+            callback: (v) => `$${v}`,
+          },
+        },
+      },
+    },
+  });
+}
+
+// 2. Usage Distribution Donut & Ranked List
+function initAnalysisCompositionChart(analysis, dimension = 'keys') {
+  const ctx = document.getElementById('chartAnalysisComposition');
+  const container = document.getElementById('analysisCompositionList');
+  if (!ctx || !container) return;
+  if (charts.analysisComposition) charts.analysisComposition.destroy();
+
+  let items = [];
+  if (dimension === 'keys') {
+    items = analysis.api_key_composition || [];
+  } else if (dimension === 'models') {
+    items = analysis.model_composition || [];
+  } else {
+    // Users dimension fallback
+    items = (analysis.api_key_composition || []).map(k => ({
+      ...k,
+      label: `User (${k.label.slice(0, 8)})`,
+    }));
+  }
+
+  if (items.length === 0) {
+    items = [{
+      label: 'Default',
+      total: analysis.cost_summary?.total_tokens || 0,
+      share: 100.0,
+      cache_rate: 0.0,
+      requests: 0,
+      cost_usd: 0.0,
+      rpm: 0.0,
+      tpm: 0,
+    }];
+  }
+
+  const palette = ['#2563eb', '#16a34a', '#d97706', '#8b5cf6', '#ec4899', '#06b6d4'];
+  const colors = items.map((_, i) => palette[i % palette.length]);
+
+  charts.analysisComposition = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: items.map(it => it.label),
+      datasets: [{
+        data: items.map(it => it.total),
+        backgroundColor: colors,
+        borderColor: '#17181d',
+        borderWidth: 2,
+        hoverOffset: 8,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '62%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...commonTooltipConfig,
+          callbacks: {
+            label: (item) => ` ${item.label}: ${formatCompactNumber(item.raw)} chars (${Number(item.raw).toLocaleString()})`,
+          },
+        },
+      },
+    },
+  });
+
+  // Render Ranked List matching cpa-usage-keeper
+  container.innerHTML = items.map((it, idx) => {
+    const col = colors[idx % colors.length];
+    return `
+      <div class="ranking-row">
+        <div class="flex items-center justify-between text-xs font-semibold text-white">
+          <div class="flex items-center space-x-2">
+            <span class="w-5 h-5 rounded-md flex items-center justify-center text-[10px] bg-slate-800 text-slate-300 font-mono">${idx + 1}</span>
+            <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${col}"></span>
+            <span class="truncate max-w-[200px]" title="${it.label}">${it.label}</span>
+          </div>
+          <div class="flex items-center space-x-2 mono">
+            <span>${formatCompactNumber(it.total)}</span>
+            <span class="text-xs text-slate-400 font-normal">(${it.share}%)</span>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-800/60 font-mono">
+          <span>Cache: <b class="text-teal-400">${it.cache_rate || 0}%</b></span>
+          <span>•</span>
+          <span>Reqs: <b class="text-white">${it.requests || 0}</b></span>
+          <span>•</span>
+          <span>Cost: <b class="text-amber-400">$${(it.cost_usd || 0).toFixed(4)}</b></span>
+          <span>•</span>
+          <span>RPM: <b class="text-slate-200">${it.rpm || 0}</b></span>
+          <span>•</span>
+          <span>TPM: <b class="text-slate-200">${(it.tpm || 0).toLocaleString()}</b></span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// 3. Top Models (Stacked Bar + Ranked List)
+function initAnalysisTopModelsChart(analysis) {
+  const ctx = document.getElementById('chartAnalysisTopModels');
+  const container = document.getElementById('analysisTopModelsList');
+  const totalEl = document.getElementById('analysisTopModelsTotal');
+  if (!ctx || !container) return;
+  if (charts.analysisTopModels) charts.analysisTopModels.destroy();
+
+  const modelUsage = analysis.model_usage || { buckets: [], series: [] };
+  const labels = modelUsage.buckets || [];
+  const series = modelUsage.series || [];
+  const palette = ['#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'];
+
+  let totalModelTokens = 0;
+  series.forEach(s => {
+    totalModelTokens += (s.total_tokens || []).reduce((a, b) => a + b, 0);
+  });
+  if (totalEl) totalEl.textContent = formatCompactNumber(totalModelTokens);
+
+  const datasets = series.map((s, idx) => ({
+    label: s.model,
+    data: s.total_tokens || [],
+    backgroundColor: palette[idx % palette.length],
+    borderRadius: 2,
+    stack: 'models',
+  }));
+
+  charts.analysisTopModels = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: datasets,
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...commonTooltipConfig,
+          callbacks: {
+            title: (items) => `Mốc: ${items[0].label}`,
+            label: (item) => ` ${item.dataset.label}: ${formatCompactNumber(item.raw)} chars`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: { color: '#94a3b8', font: { size: 10 } },
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: {
+            color: '#94a3b8',
+            font: { size: 10 },
+            callback: (v) => formatCompactNumber(v),
+          },
+        },
+      },
+    },
+  });
+
+  // Render Top Models List
+  const compItems = analysis.model_composition || [];
+  container.innerHTML = compItems.map((m, idx) => {
+    const col = palette[idx % palette.length];
+    return `
+      <div class="ranking-row">
+        <div class="flex items-center justify-between text-xs font-semibold text-white">
+          <div class="flex items-center space-x-2">
+            <span class="w-5 h-5 rounded-md flex items-center justify-center text-[10px] bg-slate-800 text-slate-300 font-mono">${idx + 1}</span>
+            <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${col}"></span>
+            <span class="truncate max-w-[200px]">${m.label}</span>
+          </div>
+          <div class="flex items-center space-x-2 mono">
+            <span>${formatCompactNumber(m.total)}</span>
+            <span class="text-xs text-slate-400 font-normal">(${m.share}%)</span>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-800/60 font-mono">
+          <span>Cache: <b class="text-teal-400">${m.cache_rate || 0}%</b></span>
+          <span>•</span>
+          <span>Reqs: <b class="text-white">${m.requests || 0}</b></span>
+          <span>•</span>
+          <span>Cost: <b class="text-amber-400">$${(m.cost_usd || 0).toFixed(4)}</b></span>
+          <span>•</span>
+          <span>RPM: <b class="text-slate-200">${m.rpm || 0}</b></span>
+          <span>•</span>
+          <span>TPM: <b class="text-slate-200">${(m.tpm || 0).toLocaleString()}</b></span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// 4. Latency Diagnostics (Scatter Plot)
+function initAnalysisLatencyChart(analysis) {
+  const ctx = document.getElementById('chartAnalysisLatency');
+  if (!ctx) return;
+  if (charts.analysisLatency) charts.analysisLatency.destroy();
+
+  const diag = analysis.latency_diagnostics || { p95_latency_ms: 0, avg_latency_ms: 0, total_points: 0, points: [] };
+  const elP95 = document.getElementById('analysisP95Latency');
+  if (elP95) elP95.textContent = `${diag.p95_latency_ms}ms`;
+  const elAvg = document.getElementById('analysisAvgLatency');
+  if (elAvg) elAvg.textContent = `${diag.avg_latency_ms}ms`;
+  const elSamples = document.getElementById('analysisSamples');
+  if (elSamples) elSamples.textContent = `${diag.total_points}`;
+
+  const scatterData = (diag.points || []).map(p => ({
+    x: p.x || 0,
+    y: p.y || 0,
+    status: p.status,
+    model: p.model,
+  }));
+
+  charts.analysisLatency = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: 'Synthesis Requests',
+        data: scatterData,
+        backgroundColor: 'rgba(6, 182, 212, 0.65)',
+        borderColor: '#06b6d4',
+        borderWidth: 1,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...commonTooltipConfig,
+          callbacks: {
+            title: (items) => `Request: ${items[0].raw.x} chars`,
+            label: (item) => ` Độ trễ: ${item.raw.y}ms | Model: ${item.raw.model || 'VieNeu-TTS'}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          position: 'bottom',
+          title: { display: true, text: 'Text Length (Chars)', color: '#94a3b8', font: { size: 11 } },
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: { color: '#94a3b8', font: { size: 10 } },
+        },
+        y: {
+          type: 'linear',
+          position: 'left',
+          title: { display: true, text: 'Latency (ms)', color: '#94a3b8', font: { size: 11 } },
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: { color: '#94a3b8', font: { size: 10 } },
+        },
+      },
+    },
+  });
+}
+
+// 5. Model Speed
+function initAnalysisModelSpeedChart(analysis) {
+  const ctx = document.getElementById('chartAnalysisSpeed');
+  const legend = document.getElementById('analysisSpeedLegend');
+  if (!ctx || !legend) return;
+  if (charts.analysisSpeed) charts.analysisSpeed.destroy();
+
+  const series = analysis.model_speed?.series || [{ model: 'VieNeu-TTS v3', speed_tps: 48.5, sample_count: 0 }];
+  const palette = ['#3b82f6', '#f59e0b', '#10b981', '#ec4899'];
+
+  charts.analysisSpeed = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: series.map(s => s.model),
+      datasets: [{
+        label: 'Tốc độ tổng hợp (chars/s)',
+        data: series.map(s => s.speed_tps),
+        backgroundColor: series.map((_, i) => palette[i % palette.length]),
+        borderRadius: 4,
+        barPercentage: 0.5,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...commonTooltipConfig,
+          callbacks: {
+            label: (item) => ` Tốc độ: ${item.raw} chars/giây`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: '#94a3b8', font: { size: 10 } },
+        },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: 'Chars / sec', color: '#94a3b8', font: { size: 10 } },
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: { color: '#94a3b8', font: { size: 10 } },
+        },
+      },
+    },
+  });
+
+  legend.innerHTML = series.map((s, idx) => `
+    <div class="flex items-center space-x-2">
+      <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${palette[idx % palette.length]}"></span>
+      <span class="text-slate-300">${s.model}: <b class="text-white mono">${s.speed_tps} chars/s</b></span>
+    </div>
+  `).join('');
+}
+
+// 6. Model Efficiency
+function initAnalysisEfficiencyChart(analysis) {
+  const ctx = document.getElementById('chartAnalysisEfficiency');
+  if (!ctx) return;
+  if (charts.analysisEfficiency) charts.analysisEfficiency.destroy();
+
+  const comp = analysis.model_composition || [{ label: 'VieNeu-TTS v3', total: 100000, cost_usd: 0.015 }];
+  const bubbleData = comp.map((c, i) => ({
+    x: c.total,
+    y: 0.1500,
+    r: Math.max(12, Math.min(30, (c.share || 50) / 3)),
+    label: c.label,
+  }));
+
+  charts.analysisEfficiency = new Chart(ctx, {
+    type: 'bubble',
+    data: {
+      datasets: [{
+        label: 'Model Efficiency',
+        data: bubbleData,
+        backgroundColor: 'rgba(59, 130, 246, 0.65)',
+        borderColor: '#3b82f6',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...commonTooltipConfig,
+          callbacks: {
+            title: (items) => items[0].raw.label,
+            label: (item) => ` Khối lượng: ${formatCompactNumber(item.raw.x)} chars | Chi phí/1M: $${item.raw.y.toFixed(4)}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Total Characters', color: '#94a3b8', font: { size: 10 } },
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: { color: '#94a3b8', font: { size: 10 }, callback: v => formatCompactNumber(v) },
+        },
+        y: {
+          title: { display: true, text: 'Cost / 1M Chars ($)', color: '#94a3b8', font: { size: 10 } },
+          min: 0.05,
+          max: 0.30,
+          grid: { color: 'rgba(255, 255, 255, 0.05)' },
+          ticks: { color: '#94a3b8', font: { size: 10 }, callback: v => `$${v.toFixed(4)}` },
+        },
+      },
+    },
+  });
+}
+
+// 7. API Key & Models Heatmap Matrix
+function initAnalysisHeatmapMatrix(analysis) {
+  const container = document.getElementById('analysisHeatmapMatrixContainer');
+  if (!container) return;
+
+  const heatmap = analysis.heatmap || { models: ['VieNeu-TTS v3'], rows: [] };
+  const models = heatmap.models || [];
+  const rows = heatmap.rows || [];
+
+  if (rows.length === 0) {
+    container.innerHTML = `<div class="p-6 text-center text-xs text-slate-500">Chưa có đủ dữ liệu ma trận lưu lượng API Key và Worker Nodes.</div>`;
+    return;
+  }
+
+  let maxChars = 1;
+  rows.forEach(r => {
+    (r.models || []).forEach(m => {
+      if (m.chars > maxChars) maxChars = m.chars;
+    });
+  });
+
+  let html = `
+    <table class="heatmap-matrix-table">
+      <thead>
+        <tr>
+          <th>Client API Key</th>
+          ${models.map(m => `<th>${m}</th>`).join('')}
+          <th class="text-right">Total Chars</th>
+          <th class="text-right">Total Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  rows.forEach(r => {
+    html += `<tr>`;
+    html += `<td class="heatmap-matrix-key">${r.api_key}</td>`;
+    (r.models || []).forEach(m => {
+      const intensity = m.chars > 0 ? Math.max(0.12, Math.min(0.85, m.chars / maxChars)) : 0;
+      const bg = intensity > 0 ? `rgba(37, 99, 235, ${intensity})` : 'transparent';
+      const textCol = intensity > 0.4 ? 'text-white' : 'text-slate-400';
+      html += `
+        <td style="background-color: ${bg}" class="${textCol}">
+          <div class="font-bold">${formatCompactNumber(m.chars)}</div>
+          <div class="text-[10px] opacity-75">${m.chars.toLocaleString()} chars</div>
+        </td>
+      `;
+    });
+    html += `
+      <td class="text-right font-bold text-white">${formatCompactNumber(r.total_chars)}</td>
+      <td class="text-right font-bold text-emerald-400">$${(r.total_cost || 0).toFixed(4)}</td>
+    `;
+    html += `</tr>`;
+  });
+
+  html += `</tbody></table>`;
+  container.innerHTML = html;
 }
 
 // ── REALTIME TAB METRICS & CHARTS ──

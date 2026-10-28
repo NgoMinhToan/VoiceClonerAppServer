@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, desc, func, select
@@ -204,15 +204,85 @@ async def purge_audio_cache():
 
 @router.get("/metrics/summary")
 async def get_metrics_summary(
-    hours: int = Query(24, ge=1, le=720),
+    hours: Union[int, str] = Query(24),
     key_name: Optional[str] = Query(None),
+    range_type: Optional[str] = Query(None),
+    tz_offset_minutes: int = Query(0),
 ):
     """Retrieve aggregated usage metrics and charts data."""
-    summary = await usage_tracker.get_metrics_summary(hours=hours, key_name=key_name)
+    numeric_hours = 24
+    effective_range_type = range_type
+    if isinstance(hours, str):
+        if hours == "today":
+            numeric_hours = 24
+            effective_range_type = effective_range_type or "today"
+        elif hours == "yesterday":
+            numeric_hours = 48
+            effective_range_type = effective_range_type or "yesterday"
+        elif hours == "7d":
+            numeric_hours = 168
+            effective_range_type = effective_range_type or "7d"
+        elif hours == "30d":
+            numeric_hours = 720
+            effective_range_type = effective_range_type or "30d"
+        else:
+            try:
+                numeric_hours = int(hours)
+            except ValueError:
+                numeric_hours = 24
+    else:
+        numeric_hours = int(hours)
+
+    summary = await usage_tracker.get_metrics_summary(
+        hours=numeric_hours,
+        key_name=key_name,
+        range_type=effective_range_type,
+        tz_offset_minutes=tz_offset_minutes,
+    )
     settings = settings_manager.get_settings()
     summary["active_keys_count"] = len([k for k in settings.client_api_keys if k.is_active])
     summary["active_workers_count"] = len([w for w in settings.model_workers if w.is_active])
     return summary
+
+
+@router.get("/metrics/analysis")
+async def get_metrics_analysis(
+    hours: Union[int, str] = Query(24),
+    key_name: Optional[str] = Query(None),
+    range_type: Optional[str] = Query(None),
+    tz_offset_minutes: int = Query(0),
+):
+    """Retrieve specialized analysis datasets for Analysis tab."""
+    numeric_hours = 24
+    effective_range_type = range_type
+    if isinstance(hours, str):
+        if hours == "today":
+            numeric_hours = 24
+            effective_range_type = effective_range_type or "today"
+        elif hours == "yesterday":
+            numeric_hours = 48
+            effective_range_type = effective_range_type or "yesterday"
+        elif hours == "7d":
+            numeric_hours = 168
+            effective_range_type = effective_range_type or "7d"
+        elif hours == "30d":
+            numeric_hours = 720
+            effective_range_type = effective_range_type or "30d"
+        else:
+            try:
+                numeric_hours = int(hours)
+            except ValueError:
+                numeric_hours = 24
+    else:
+        numeric_hours = int(hours)
+
+    summary = await usage_tracker.get_metrics_summary(
+        hours=numeric_hours,
+        key_name=key_name,
+        range_type=effective_range_type,
+        tz_offset_minutes=tz_offset_minutes,
+    )
+    return summary.get("analysis", {})
 
 
 # ── USER MANAGEMENT ENDPOINTS ──
