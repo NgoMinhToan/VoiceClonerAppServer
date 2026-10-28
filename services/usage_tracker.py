@@ -58,9 +58,10 @@ class UsageTracker:
         except Exception as e:
             logger.warning(f"Could not persist usage log to database ({e}). In-memory log retained.")
 
-    async def get_metrics_summary(self, hours: int = 24) -> Dict[str, Any]:
+    async def get_metrics_summary(self, hours: int = 24, key_name: Optional[str] = None) -> Dict[str, Any]:
         """Aggregate metrics for dashboard telemetry and charts."""
         since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
+        filter_key = (key_name is not None and key_name != "all" and key_name.strip() != "")
 
         try:
             async with AsyncSessionLocal() as session:
@@ -70,6 +71,8 @@ class UsageTracker:
                     func.coalesce(func.sum(ApiUsageLog.char_count), 0),
                     func.coalesce(func.avg(ApiUsageLog.latency_ms), 0.0),
                 ).where(ApiUsageLog.timestamp >= since)
+                if filter_key:
+                    totals_query = totals_query.where(ApiUsageLog.client_key_name == key_name)
                 totals_res = await session.execute(totals_query)
                 total_reqs, total_chars, avg_latency = totals_res.one()
 
@@ -78,6 +81,8 @@ class UsageTracker:
                     ApiUsageLog.timestamp >= since,
                     ApiUsageLog.status_code >= 400,
                 )
+                if filter_key:
+                    failed_query = failed_query.where(ApiUsageLog.client_key_name == key_name)
                 failed_res = await session.execute(failed_query)
                 failed_requests = int(failed_res.scalar() or 0)
                 success_requests = max(0, int(total_reqs) - failed_requests)
@@ -91,6 +96,8 @@ class UsageTracker:
                     ApiUsageLog.latency_ms < 15.0,
                     ApiUsageLog.status_code == 200,
                 )
+                if filter_key:
+                    cache_hit_query = cache_hit_query.where(ApiUsageLog.client_key_name == key_name)
                 cache_hit_res = await session.execute(cache_hit_query)
                 cache_hits, cached_chars = cache_hit_res.one()
                 cache_hits = int(cache_hits or 0)
@@ -112,19 +119,42 @@ class UsageTracker:
                         func.sum(ApiUsageLog.char_count).label("chars"),
                     )
                     .where(ApiUsageLog.timestamp >= since)
-                    .group_by(ApiUsageLog.client_key_name)
-                    .order_by(desc("chars"))
                 )
+                if filter_key:
+                    by_key_query = by_key_query.where(ApiUsageLog.client_key_name == key_name)
+                by_key_query = by_key_query.group_by(ApiUsageLog.client_key_name).order_by(desc("chars"))
                 by_key_res = await session.execute(by_key_query)
                 usage_by_key = [
                     {"name": row.client_key_name, "requests": row.requests, "chars": row.chars}
                     for row in by_key_res.all()
                 ]
 
-                # 3. Usage by model: Standard model is VieNeu-TTS v3
-                usage_by_model = [
-                    {"model": "VieNeu-TTS v3", "requests": int(total_reqs), "chars": int(total_chars)}
-                ]
+                # 3. Usage by model/worker (excluding cache hits)
+                by_model_query = (
+                    select(
+                        func.coalesce(ApiUsageLog.model_worker_id, "VieNeu-TTS v3").label("model"),
+                        func.count(ApiUsageLog.id).label("requests"),
+                        func.coalesce(func.sum(ApiUsageLog.char_count), 0).label("chars"),
+                    )
+                    .where(
+                        ApiUsageLog.timestamp >= since,
+                        ApiUsageLog.model_worker_id != "cache-hit",
+                    )
+                )
+                if filter_key:
+                    by_model_query = by_model_query.where(ApiUsageLog.client_key_name == key_name)
+                by_model_query = by_model_query.group_by(ApiUsageLog.model_worker_id).order_by(desc("chars"))
+                by_model_res = await session.execute(by_model_query)
+                rows = by_model_res.all()
+                if rows:
+                    usage_by_model = [
+                        {"model": row.model or "VieNeu-TTS v3", "requests": int(row.requests or 0), "chars": int(row.chars or 0)}
+                        for row in rows
+                    ]
+                else:
+                    usage_by_model = [
+                        {"model": "VieNeu-TTS v3", "requests": int(total_reqs), "chars": int(total_chars)}
+                    ]
 
                 # 4. Synchronized 32 time buckets across the window (for heatmaps & charts)
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -147,23 +177,30 @@ class UsageTracker:
                     })
 
                 all_logs_query = (
-                    select(ApiUsageLog)
+                    select(
+                        ApiUsageLog.timestamp,
+                        ApiUsageLog.char_count,
+                        ApiUsageLog.latency_ms,
+                        ApiUsageLog.status_code,
+                    )
                     .where(ApiUsageLog.timestamp >= since)
-                    .order_by(ApiUsageLog.timestamp.asc())
                 )
+                if filter_key:
+                    all_logs_query = all_logs_query.where(ApiUsageLog.client_key_name == key_name)
+                all_logs_query = all_logs_query.order_by(ApiUsageLog.timestamp.asc())
                 all_logs_res = await session.execute(all_logs_query)
-                for row in all_logs_res.scalars().all():
-                    offset_sec = (row.timestamp - since).total_seconds()
+                for row_ts, row_chars, row_lat, row_status in all_logs_res.all():
+                    offset_sec = (row_ts - since).total_seconds()
                     b_idx = min(31, max(0, int(offset_sec / bucket_duration_sec)))
                     b = time_buckets[b_idx]
                     b["requests"] += 1
-                    b["chars"] += row.char_count
-                    b["latency_sum"] += row.latency_ms
-                    if row.status_code >= 400:
+                    b["chars"] += int(row_chars or 0)
+                    b["latency_sum"] += float(row_lat or 0.0)
+                    if (row_status or 200) >= 400:
                         b["failed_requests"] += 1
                     else:
                         b["success_requests"] += 1
-                    if row.latency_ms < 15.0 and row.status_code == 200:
+                    if (float(row_lat or 0.0) < 15.0) and (row_status == 200):
                         b["cache_hits"] += 1
 
                 for b in time_buckets:
@@ -182,12 +219,11 @@ class UsageTracker:
                     for b in time_buckets
                 ]
 
-                # 5. Recent logs (expanded to 50 items)
-                recent_query = (
-                    select(ApiUsageLog)
-                    .order_by(desc(ApiUsageLog.id))
-                    .limit(50)
-                )
+                # 5. Recent logs (expanded to 100 items)
+                recent_query = select(ApiUsageLog)
+                if filter_key:
+                    recent_query = recent_query.where(ApiUsageLog.client_key_name == key_name)
+                recent_query = recent_query.order_by(desc(ApiUsageLog.id)).limit(100)
                 recent_res = await session.execute(recent_query)
                 recent_logs = [
                     {
@@ -195,7 +231,7 @@ class UsageTracker:
                         "time": row.timestamp.isoformat(),
                         "key_name": row.client_key_name,
                         "endpoint": row.endpoint,
-                        "worker": "VieNeu-TTS v3" if row.model_worker_id != "cache-hit" else "Cache Hit (SHA-256)",
+                        "worker": "Cache Hit (SHA-256)" if row.model_worker_id == "cache-hit" else (row.model_worker_id or "VieNeu-TTS v3"),
                         "chars": row.char_count,
                         "latency_ms": round(row.latency_ms, 2),
                         "status": row.status_code,
@@ -230,6 +266,8 @@ class UsageTracker:
             logger.warning(f"Database query failed in get_metrics_summary ({e}), calculating from memory.")
             async with self._lock:
                 logs = [l for l in self._in_memory_logs if l["timestamp"].replace(tzinfo=None) >= since]
+                if filter_key:
+                    logs = [l for l in logs if l.get("client_key_name") == key_name]
                 total_reqs = len(logs)
                 total_chars = sum(l["char_count"] for l in logs)
                 avg_latency = (sum(l["latency_ms"] for l in logs) / total_reqs) if total_reqs > 0 else 0.0
@@ -307,13 +345,13 @@ class UsageTracker:
                             "time": l["timestamp"].isoformat(),
                             "key_name": l.get("client_key_name", "Anonymous"),
                             "endpoint": l.get("endpoint", "/v1/speech/synthesize"),
-                            "worker": "VieNeu-TTS v3",
+                            "worker": "Cache Hit (SHA-256)" if l.get("model_worker_id") == "cache-hit" else (l.get("model_worker_id") or "VieNeu-TTS v3"),
                             "chars": l.get("char_count", 0),
                             "latency_ms": round(l.get("latency_ms", 0.0), 2),
                             "status": l.get("status_code", 200),
                             "is_cache_hit": l.get("latency_ms", 0.0) < 15.0 and l.get("status_code", 200) == 200,
                         }
-                        for idx, l in enumerate(logs[-50:])
+                        for idx, l in enumerate(logs[-100:])
                     ],
                 }
 

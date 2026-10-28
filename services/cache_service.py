@@ -58,4 +58,20 @@ class CacheService:
             raise
 
 
+    def purge_cache(self) -> int:
+        """Purge all cached audio WAV files and return the number of deleted files."""
+        deleted_count = 0
+        if not self.cache_dir.exists():
+            return 0
+        for item in self.cache_dir.glob("*.wav"):
+            try:
+                if item.is_file():
+                    item.unlink()
+                    deleted_count += 1
+            except Exception as e:
+                logger.warning(f"Could not delete cache file {item.name}: {e}")
+        logger.info(f"Purged {deleted_count} audio cache files.")
+        return deleted_count
+
+
 cache_service = CacheService()

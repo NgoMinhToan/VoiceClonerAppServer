@@ -73,10 +73,13 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `GET /v1/system/status`: Báo cáo phần cứng, backend, số lượng worker phục vụ Android Client.
 
 ### 4.5 Quản Trị Hệ Thống (`/v1/management` & `/dashboard`)
-- `GET /dashboard`: Giao diện điều khiển Web CLIProxyAPI.
+- `GET /dashboard`: Giao diện điều khiển Web CLIProxyAPI / KEEPER style console.
 - `GET/PUT /v1/management/settings`: Đọc và cập nhật cấu hình hệ thống (Hot-Reload).
 - `GET/POST/DELETE/PATCH /v1/management/keys`: Quản lý danh sách Client API Key.
-- `GET/POST /v1/management/workers`: Danh sách và ping test năng lực các worker inference.
+- `GET/POST/DELETE/PATCH /v1/management/workers`: Quản lý danh sách, thêm/xóa/bật/tắt và ping test đồng thời các worker inference.
+- `POST /v1/management/workers/test`: Ping kiểm tra địa chỉ worker bất kỳ.
+- `POST /v1/management/cache/purge`: Dọn dẹp toàn bộ tệp âm thanh WAV trong bộ đệm cache.
+- `GET /v1/management/metrics/summary`: Truy vấn tổng hợp số liệu lưu lượng, tỷ lệ cache, độ trễ và log sự kiện (hỗ trợ lọc theo `hours` và `key_name`).
 - `GET/PATCH/DELETE /v1/management/users`: Quản trị tài khoản người dùng và điều chỉnh slot clone.
 
 ---

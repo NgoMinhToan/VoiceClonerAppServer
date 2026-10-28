@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -15,6 +16,7 @@ from VoiceClonerAppServer.core.database import AsyncSessionLocal
 from VoiceClonerAppServer.core.redis_client import get_daily_usage
 from VoiceClonerAppServer.core.security import verify_management_key
 from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice
+from VoiceClonerAppServer.services.cache_service import cache_service
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 from VoiceClonerAppServer.services.usage_tracker import usage_tracker
 
@@ -43,6 +45,14 @@ class UpdateSettingsRequest(BaseModel):
 class TestWorkerRequest(BaseModel):
     url: str
     api_key: Optional[str] = ""
+
+
+class CreateWorkerRequest(BaseModel):
+    id: str = Field(..., min_length=1, max_length=100)
+    url: str = Field(..., min_length=1)
+    api_key: Optional[str] = ""
+    weight: int = Field(1, ge=1, le=100)
+    is_active: bool = True
 
 
 class UpdateUserRequest(BaseModel):
@@ -102,20 +112,23 @@ async def toggle_client_key(key_id: str, is_active: bool = Query(...)):
 
 @router.get("/workers")
 async def list_workers():
-    """Get status of all configured model inference worker nodes."""
+    """Get status of all configured model inference worker nodes concurrently."""
     settings = settings_manager.get_settings()
-    results = []
-    for worker in settings.model_workers:
+    workers = settings.model_workers
+
+    async def _ping_worker(worker):
         ping = await model_dispatcher.ping_worker(worker.url, worker.api_key)
-        results.append({
+        return {
             "id": worker.id,
             "url": worker.url,
             "api_key_masked": worker.api_key[:4] + "****" if len(worker.api_key) > 4 else ("set" if worker.api_key else "none"),
             "weight": worker.weight,
             "is_active": worker.is_active,
             "telemetry": ping,
-        })
-    return results
+        }
+
+    results = await asyncio.gather(*[_ping_worker(w) for w in workers])
+    return list(results)
 
 
 @router.post("/workers/test")
@@ -125,10 +138,77 @@ async def test_worker(payload: TestWorkerRequest):
     return res
 
 
+@router.post("/workers", status_code=status.HTTP_201_CREATED)
+async def create_worker(payload: CreateWorkerRequest):
+    """Add a new model inference worker node with URL normalization."""
+    settings = settings_manager.get_settings()
+    workers = [w.model_dump() for w in settings.model_workers]
+    clean_id = payload.id.strip()
+    clean_url = payload.url.strip().rstrip("/")
+    if not (clean_url.startswith("http://") or clean_url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="Worker URL must start with http:// or https://")
+    if any(w["id"] == clean_id for w in workers):
+        raise HTTPException(status_code=400, detail="Worker ID already exists")
+
+    new_worker = {
+        "id": clean_id,
+        "url": clean_url,
+        "api_key": (payload.api_key or "").strip(),
+        "weight": payload.weight,
+        "is_active": payload.is_active,
+    }
+    workers.append(new_worker)
+    settings_manager.update_settings({"model_workers": workers})
+    return {"status": "success", "message": f"Worker {clean_id} created"}
+
+
+@router.delete("/workers/{worker_id}")
+async def delete_worker(worker_id: str):
+    """Remove a model inference worker node."""
+    settings = settings_manager.get_settings()
+    workers = [w.model_dump() for w in settings.model_workers]
+    new_workers = [w for w in workers if w["id"] != worker_id]
+    if len(new_workers) == len(workers):
+        raise HTTPException(status_code=404, detail="Worker not found")
+    settings_manager.update_settings({"model_workers": new_workers})
+    return {"status": "success", "message": f"Worker {worker_id} deleted"}
+
+
+@router.patch("/workers/{worker_id}/toggle")
+async def toggle_worker(worker_id: str, is_active: bool = Query(...)):
+    """Enable or disable a model inference worker node."""
+    settings = settings_manager.get_settings()
+    workers = [w.model_dump() for w in settings.model_workers]
+    found = False
+    for w in workers:
+        if w["id"] == worker_id:
+            w["is_active"] = is_active
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    settings_manager.update_settings({"model_workers": workers})
+    return {"status": "success", "worker_id": worker_id, "is_active": is_active}
+
+
+@router.post("/cache/purge")
+async def purge_audio_cache():
+    """Purge all cached audio WAV files from disk."""
+    deleted_files = cache_service.purge_cache()
+    return {
+        "status": "success",
+        "deleted_files": deleted_files,
+        "message": f"Successfully deleted {deleted_files} cache files",
+    }
+
+
 @router.get("/metrics/summary")
-async def get_metrics_summary(hours: int = Query(24, ge=1, le=168)):
+async def get_metrics_summary(
+    hours: int = Query(24, ge=1, le=720),
+    key_name: Optional[str] = Query(None),
+):
     """Retrieve aggregated usage metrics and charts data."""
-    summary = await usage_tracker.get_metrics_summary(hours=hours)
+    summary = await usage_tracker.get_metrics_summary(hours=hours, key_name=key_name)
     settings = settings_manager.get_settings()
     summary["active_keys_count"] = len([k for k in settings.client_api_keys if k.is_active])
     summary["active_workers_count"] = len([w for w in settings.model_workers if w.is_active])

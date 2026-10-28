@@ -84,9 +84,12 @@
 ### 2.4 Nhóm Quản Trị Hệ Thống (`/v1/management`, `/dashboard`)
 | Phương thức | Endpoint | Header / Auth | Mô tả |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/dashboard` | `X-Management-Key` | Giao diện điều khiển Web CLIProxyAPI (Metrics, Keys, Workers, Users, Settings) |
+| `GET` | `/dashboard` | `X-Management-Key` | Giao diện điều khiển Web CLIProxyAPI / KEEPER (Metrics, Realtime, Events, Keys, Workers, Users, Settings) |
 | `GET/POST/DELETE/PATCH` | `/v1/management/keys` | `X-Management-Key` | Quản lý Client API Keys |
-| `GET/POST` | `/v1/management/workers` | `X-Management-Key` | Quản lý và ping test năng lực các Model Worker Nodes |
+| `GET/POST/DELETE/PATCH` | `/v1/management/workers` | `X-Management-Key` | Quản lý danh sách, thêm/xóa/bật/tắt và ping test song song các Model Worker Nodes |
+| `POST` | `/v1/management/workers/test` | `X-Management-Key` | Ping kiểm tra địa chỉ worker bất kỳ |
+| `POST` | `/v1/management/cache/purge` | `X-Management-Key` | Dọn dẹp toàn bộ tệp âm thanh trong bộ đệm cache |
+| `GET` | `/v1/management/metrics/summary` | `X-Management-Key` | Tổng hợp số liệu lưu lượng và chẩn đoán (hỗ trợ lọc `hours` và `key_name`) |
 | `GET/PUT` | `/v1/management/settings` | `X-Management-Key` | Đọc và lưu cấu hình hệ thống với khả năng Hot-Reload tức thì |
 | `GET/PATCH/DELETE` | `/v1/management/users` | `X-Management-Key` | Quản trị tài khoản người dùng và điều chỉnh slot clone |
 
