@@ -92,7 +92,7 @@
 | `GET` | `/v1/management/metrics/summary` | `X-Management-Key` | Tổng hợp số liệu lưu lượng, chẩn đoán và phân tích (hỗ trợ `hours`, `range_type`, `tz_offset_minutes`, và `key_name`) |
 | `GET` | `/v1/management/metrics/analysis` | `X-Management-Key` | Dữ liệu chuyên sâu cho Tab Analysis (Token Usage Over Time, Top Models, Latency Scatter, Model Speed, Heatmap) |
 | `GET/PUT` | `/v1/management/settings` | `X-Management-Key` | Đọc và lưu cấu hình hệ thống với khả năng Hot-Reload tức thì |
-| `GET/PATCH/DELETE` | `/v1/management/users` | `X-Management-Key` | Quản trị tài khoản người dùng và điều chỉnh slot clone |
+| `GET/PATCH/DELETE` | `/v1/management/users` | `X-Management-Key` | Quản trị tài khoản người dùng, xem và điều chỉnh độc lập 7 hạn mức quota (`max_cloned_slots`, `daily_tts_char_limit`, `rate_limit_requests_per_minute`, `max_speech_char_limit`, `max_preview_char_limit`, `max_concurrent_tts`, `max_queue_waiters`) |
 
 ---
 
@@ -106,8 +106,27 @@
 
 ---
 
-## 4. Kết Quả Kiểm Thử (Verification Suite)
-Toàn bộ **31/31 test cases** trong `VoiceClonerAppServer/tests/` đã được chạy và vượt qua 100%:
+## 4. Kiến Trúc Hạn Mức Mặc Định & Quản Lý Quota Người Dùng (Default User Limits & Per-User Quotas)
+- **Cấu hình `default_user_limits` trong `settings.json`**:
+  - `max_cloned_slots`: 3
+  - `daily_tts_char_limit`: 50,000 ký tự/ngày
+  - `rate_limit_requests_per_minute`: 60 requests/phút
+  - `max_speech_char_limit`: 2,000 ký tự/lần
+  - `max_preview_char_limit`: 250 ký tự/lần
+  - `max_concurrent_tts`: 1 luồng/user
+  - `max_queue_waiters`: 1 hàng đợi/user
+- **Tách biệt với Concurrency Toàn Server**:
+  - `concurrency` trong `settings.json` tập trung hoàn toàn vào hạ tầng phần cứng toàn cụm: `max_concurrent_tts` (tổng luồng worker), `max_queue_waiters` (tổng hàng đợi server).
+- **Thực thi Per-User**:
+  - Bảng `users` lưu trữ độc lập các thuộc tính hạn mức cho từng tài khoản.
+  - Khi người dùng đăng ký mới, hệ thống tự động gán các giá trị từ `default_user_limits`.
+  - `UserConcurrencyLimiter` bảo đảm mỗi user không chạy vượt quá số luồng đồng thời và hàng đợi cho phép, trả về HTTP 429 khi hàng đợi của user bị tràn.
+  - Admin có thể tùy biến độc lập toàn bộ 7 hạn mức cho từng tài khoản qua `PATCH /v1/management/users/{user_id}` hoặc giao diện Dashboard.
+
+---
+
+## 5. Kết Quả Kiểm Thử (Verification Suite)
+Toàn bộ **59/59 test cases** trong `VoiceClonerAppServer/tests/` đã được chạy và vượt qua 100%:
 - `test_exceptions_and_security.py`:
   - `test_register_invalid_email_and_short_password`: Xác thực email sai chuẩn và mật khẩu < 6 ký tự bị từ chối với 422.
   - `test_login_wrong_credentials`: Đăng nhập sai mật khẩu hoặc tài khoản không tồn tại bị từ chối 401.

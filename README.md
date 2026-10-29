@@ -65,8 +65,8 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `DELETE /v1/voices/{voice_id}`: Xóa giọng clone và giải phóng slot quota.
 
 ### 4.3 Tổng Hợp Âm Thanh (`/v1/audio`) & Nghe Thử
-- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (kiểm tra giới hạn độ dài `max_speech_char_limit`, kiểm tra hạn mức còn lại, kiểm tra quota ký tự, lọc worker theo voice capability, điều phối Least-Active).
-- `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng (hỗ trợ Audio Cache, giới hạn độ dài `max_preview_char_limit`, kiểm tra hạn mức còn lại, kiểm tra và trừ quota ký tự hàng ngày).
+- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (kiểm tra giới hạn độ dài `max_speech_char_limit` của user, kiểm tra hạn mức còn lại, kiểm tra quota ký tự, kiểm tra rate limit per-user, xếp hàng concurrency per-user, lọc worker theo voice capability, điều phối Least-Active).
+- `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng (hỗ trợ Audio Cache, giới hạn độ dài `max_preview_char_limit` của user, kiểm tra hạn mức còn lại, kiểm tra rate limit per-user, xếp hàng concurrency per-user, kiểm tra và trừ quota ký tự hàng ngày).
 
 ### 4.4 Trạng Thái Hệ Thống (`/v1/system`)
 - `GET /health`: Probe kiểm tra container alive.
@@ -80,7 +80,7 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `POST /v1/management/workers/test`: Ping kiểm tra địa chỉ worker bất kỳ.
 - `POST /v1/management/cache/purge`: Dọn dẹp toàn bộ tệp âm thanh WAV trong bộ đệm cache.
 - `GET /v1/management/metrics/summary`: Truy vấn tổng hợp số liệu lưu lượng, tỷ lệ cache, độ trễ và log sự kiện (hỗ trợ lọc theo `hours` và `key_name`).
-- `GET/PATCH/DELETE /v1/management/users`: Quản trị tài khoản người dùng và điều chỉnh slot clone.
+- `GET/PATCH/DELETE /v1/management/users`: Quản trị tài khoản người dùng, xem và tùy biến độc lập toàn bộ 7 hạn mức quota (`max_cloned_slots`, `daily_tts_char_limit`, `rate_limit_requests_per_minute`, `max_speech_char_limit`, `max_preview_char_limit`, `max_concurrent_tts`, `max_queue_waiters`).
 
 ---
 
