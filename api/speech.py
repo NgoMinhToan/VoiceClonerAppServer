@@ -21,6 +21,7 @@ from VoiceClonerAppServer.core.settings_manager import ClientApiKeyConfig, setti
 from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice, utc_now
 from VoiceClonerAppServer.models.schemas import PreviewSpeechRequest, SynthesisRequest
 from VoiceClonerAppServer.services.cache_service import cache_service
+from VoiceClonerAppServer.services.concurrency_limiter import user_concurrency_limiter
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 from VoiceClonerAppServer.services.usage_tracker import usage_tracker
 from VoiceClonerAppServer.services.voice_service import CLONED_VOICES_DIR, voice_service
@@ -78,8 +79,14 @@ async def create_speech(
         f"user='{current_user.email}' | client='{client_name}' | format={response_format}"
     )
 
-    # 3. Check max speech character limit from settings
-    max_speech_limit = settings_manager.get_settings().concurrency.max_speech_char_limit
+    # 3. Check user limits
+    default_limits = settings_manager.get_settings().default_user_limits
+    max_speech_limit = getattr(current_user, "max_speech_char_limit", None) or default_limits.max_speech_char_limit
+    daily_limit = getattr(current_user, "daily_tts_char_limit", None) or default_limits.daily_tts_char_limit
+    user_rate_limit = getattr(current_user, "rate_limit_requests_per_minute", None) or default_limits.rate_limit_requests_per_minute
+    user_concurrent = getattr(current_user, "max_concurrent_tts", None) or default_limits.max_concurrent_tts
+    user_queue = getattr(current_user, "max_queue_waiters", None) or default_limits.max_queue_waiters
+
     if char_count > max_speech_limit:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -87,7 +94,6 @@ async def create_speech(
         )
 
     # 4. Check remaining daily quota
-    daily_limit = settings_manager.get_settings().concurrency.daily_tts_char_limit
     current_used = await get_daily_usage(current_user.id)
     remaining_chars = max(0, daily_limit - current_used)
     if char_count > remaining_chars:
@@ -97,7 +103,7 @@ async def create_speech(
         )
 
     # 5. Check rate limit
-    if not await check_rate_limit(current_user.id):
+    if not await check_rate_limit(current_user.id, max_requests=user_rate_limit):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
@@ -184,18 +190,23 @@ async def create_speech(
 
     t0 = time.perf_counter()
     try:
-        audio_bytes, exec_sec, worker_id = await model_dispatcher.synthesize(
-            text=input_text,
-            voice=voice_name,
-            speed=request.speed,
-            pitch=request.pitch,
-            emotion=request.emotion_level if request.emotion_level is not None else request.emotion,
-            denoise=request.denoise,
-            smart_pause=request.smart_pause,
-            response_format=response_format,
-            ref_audio_path=ref_audio_path,
-            ref_npz_base64=ref_npz_base64,
-        )
+        async with user_concurrency_limiter.acquire(
+            current_user.id,
+            max_concurrent=user_concurrent,
+            max_waiters=user_queue,
+        ):
+            audio_bytes, exec_sec, worker_id = await model_dispatcher.synthesize(
+                text=input_text,
+                voice=voice_name,
+                speed=request.speed,
+                pitch=request.pitch,
+                emotion=request.emotion_level if request.emotion_level is not None else request.emotion,
+                denoise=request.denoise,
+                smart_pause=request.smart_pause,
+                response_format=response_format,
+                ref_audio_path=ref_audio_path,
+                ref_npz_base64=ref_npz_base64,
+            )
 
         duration_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -254,6 +265,9 @@ async def create_speech(
             "X-Model-Worker": worker_id,
         }
         return Response(content=audio_bytes, media_type=media_type, headers=headers)
+    except HTTPException:
+        await rollback_daily_quota(current_user.id, char_count)
+        raise
     except Exception as e:
         await rollback_daily_quota(current_user.id, char_count)
         duration_ms = (time.perf_counter() - t0) * 1000.0
@@ -318,8 +332,14 @@ async def preview_voice(
 
     char_count = len(sample_text)
 
-    # 1. Check max preview character limit from settings
-    max_preview_limit = settings_manager.get_settings().concurrency.max_preview_char_limit
+    # 1. Check user limits
+    default_limits = settings_manager.get_settings().default_user_limits
+    max_preview_limit = getattr(current_user, "max_preview_char_limit", None) or default_limits.max_preview_char_limit
+    daily_limit = getattr(current_user, "daily_tts_char_limit", None) or default_limits.daily_tts_char_limit
+    user_rate_limit = getattr(current_user, "rate_limit_requests_per_minute", None) or default_limits.rate_limit_requests_per_minute
+    user_concurrent = getattr(current_user, "max_concurrent_tts", None) or default_limits.max_concurrent_tts
+    user_queue = getattr(current_user, "max_queue_waiters", None) or default_limits.max_queue_waiters
+
     if char_count > max_preview_limit:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -327,7 +347,6 @@ async def preview_voice(
         )
 
     # 2. Check remaining daily quota
-    daily_limit = settings_manager.get_settings().concurrency.daily_tts_char_limit
     current_used = await get_daily_usage(current_user.id)
     remaining_chars = max(0, daily_limit - current_used)
     if char_count > remaining_chars:
@@ -337,7 +356,7 @@ async def preview_voice(
         )
 
     # 3. Check rate limit
-    if not await check_rate_limit(current_user.id):
+    if not await check_rate_limit(current_user.id, max_requests=user_rate_limit):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
@@ -385,16 +404,21 @@ async def preview_voice(
 
     t0 = time.perf_counter()
     try:
-        audio_bytes, exec_sec, worker_id = await model_dispatcher.synthesize(
-            text=sample_text,
-            voice=voice_id,
-            speed=request.speed or 1.0,
-            pitch=request.pitch or 0,
-            emotion=request.emotion or 85,
-            response_format="wav",
-            ref_audio_path=ref_audio_path,
-            ref_npz_base64=ref_npz_base64,
-        )
+        async with user_concurrency_limiter.acquire(
+            current_user.id,
+            max_concurrent=user_concurrent,
+            max_waiters=user_queue,
+        ):
+            audio_bytes, exec_sec, worker_id = await model_dispatcher.synthesize(
+                text=sample_text,
+                voice=voice_id,
+                speed=request.speed or 1.0,
+                pitch=request.pitch or 0,
+                emotion=request.emotion or 85,
+                response_format="wav",
+                ref_audio_path=ref_audio_path,
+                ref_npz_base64=ref_npz_base64,
+            )
         duration_ms = (time.perf_counter() - t0) * 1000.0
 
         if audio_bytes and len(audio_bytes) > 44:
@@ -450,6 +474,9 @@ async def preview_voice(
             "X-Model-Worker": worker_id,
         }
         return Response(content=audio_bytes, media_type="audio/wav", headers=headers)
+    except HTTPException:
+        await rollback_daily_quota(current_user.id, char_count)
+        raise
     except Exception as e:
         await rollback_daily_quota(current_user.id, char_count)
         duration_ms = (time.perf_counter() - t0) * 1000.0

@@ -316,23 +316,23 @@ def test_preview_insufficient_remaining_quota(monkeypatch):
 
     monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_synth)
 
-    user_res = client.post(
-        "/v1/auth/register",
-        json={"email": f"quota_probe_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Quota Probe"}
-    )
-    token = user_res.json()["access_token"]
-    user_id = user_res.json()["user"]["id"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # Temporarily set daily_tts_char_limit to 1000 chars via management settings
+    # Temporarily set default daily_tts_char_limit to 1000 chars via management settings
     m_key = settings_manager.get_settings().security.management_key
     client.put(
         "/v1/management/settings",
         headers={"X-Management-Key": m_key},
-        json={"concurrency": {"daily_tts_char_limit": 1000}}
+        json={"default_user_limits": {"daily_tts_char_limit": 1000}}
     )
 
     try:
+        user_res = client.post(
+            "/v1/auth/register",
+            json={"email": f"quota_probe_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Quota Probe"}
+        )
+        token = user_res.json()["access_token"]
+        user_id = user_res.json()["user"]["id"]
+        headers = {"Authorization": f"Bearer {token}"}
+
         # Pre-fill user usage with unique text to guarantee Cache MISS (e.g. 950 chars out of 1000 limit)
         fill_prefix = f"FILL_{uuid.uuid4().hex}_{time.time()}_"
         speech_text = fill_prefix + ("Z" * (950 - len(fill_prefix)))
@@ -363,11 +363,11 @@ def test_preview_insufficient_remaining_quota(monkeypatch):
         assert "không đủ" in res2.json()["detail"]
         assert f"{remaining} ký tự còn lại" in res2.json()["detail"]
     finally:
-        # Restore default daily limit 100,000
+        # Restore default daily limit
         client.put(
             "/v1/management/settings",
             headers={"X-Management-Key": m_key},
-            json={"concurrency": {"daily_tts_char_limit": 100000}}
+            json={"default_user_limits": {"daily_tts_char_limit": 50000}}
         )
 
 
@@ -428,21 +428,21 @@ def test_speech_insufficient_remaining_quota(monkeypatch):
 
     monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_synth)
 
-    user_res = client.post(
-        "/v1/auth/register",
-        json={"email": f"speech_quota_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Speech Quota Probe"}
-    )
-    token = user_res.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     m_key = settings_manager.get_settings().security.management_key
     client.put(
         "/v1/management/settings",
         headers={"X-Management-Key": m_key},
-        json={"concurrency": {"daily_tts_char_limit": 1000}}
+        json={"default_user_limits": {"daily_tts_char_limit": 1000}}
     )
 
     try:
+        user_res = client.post(
+            "/v1/auth/register",
+            json={"email": f"speech_quota_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Speech Quota Probe"}
+        )
+        token = user_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
         # Pre-fill user usage with 960 chars (1000 - 960 = 40 remaining)
         fill_prefix = f"FILL_SP_{uuid.uuid4().hex}_{time.time()}_"
         speech_text = fill_prefix + ("K" * (960 - len(fill_prefix)))
@@ -471,6 +471,6 @@ def test_speech_insufficient_remaining_quota(monkeypatch):
         client.put(
             "/v1/management/settings",
             headers={"X-Management-Key": m_key},
-            json={"concurrency": {"daily_tts_char_limit": 100000}}
+            json={"default_user_limits": {"daily_tts_char_limit": 50000}}
         )
 
