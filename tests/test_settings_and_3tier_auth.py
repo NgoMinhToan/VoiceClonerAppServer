@@ -115,6 +115,51 @@ def test_hot_reload_settings_persists():
     )
 
 
+def test_default_user_limits_settings_and_hot_reload():
+    m_key = settings_manager.get_settings().security.management_key
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": m_key},
+        json={
+            "default_user_limits": {
+                "max_cloned_slots": 5,
+                "daily_tts_char_limit": 60000,
+                "rate_limit_requests_per_minute": 90,
+                "max_speech_char_limit": 3000,
+                "max_preview_char_limit": 300,
+                "max_concurrent_tts": 2,
+                "max_queue_waiters": 3,
+            }
+        }
+    )
+    assert res.status_code == 200
+    cfg = settings_manager.get_settings().default_user_limits
+    assert cfg.max_cloned_slots == 5
+    assert cfg.daily_tts_char_limit == 60000
+    assert cfg.rate_limit_requests_per_minute == 90
+    assert cfg.max_speech_char_limit == 3000
+    assert cfg.max_preview_char_limit == 300
+    assert cfg.max_concurrent_tts == 2
+    assert cfg.max_queue_waiters == 3
+
+    # Restore defaults
+    client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": m_key},
+        json={
+            "default_user_limits": {
+                "max_cloned_slots": 3,
+                "daily_tts_char_limit": 50000,
+                "rate_limit_requests_per_minute": 60,
+                "max_speech_char_limit": 2000,
+                "max_preview_char_limit": 250,
+                "max_concurrent_tts": 1,
+                "max_queue_waiters": 1,
+            }
+        }
+    )
+
+
 def test_speech_rejects_invalid_client_api_key_even_if_authenticated(monkeypatch):
     import time
     from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher

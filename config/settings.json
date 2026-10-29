@@ -36,6 +36,15 @@
       "is_active": true
     }
   ],
+  "default_user_limits": {
+    "max_cloned_slots": 3,
+    "daily_tts_char_limit": 50000,
+    "rate_limit_requests_per_minute": 60,
+    "max_speech_char_limit": 2000,
+    "max_preview_char_limit": 250,
+    "max_concurrent_tts": 1,
+    "max_queue_waiters": 1
+  },
   "concurrency": {
     "max_concurrent_tts": 2,
     "max_queue_waiters": 8,

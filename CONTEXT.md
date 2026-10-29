@@ -24,10 +24,9 @@
 - **Auth Providers**: Email/Password (bcrypt + JWT) and Google Sign-In (OAuth2 / Google ID tokens).
 - **Tokens**: Access token (15 mins), Refresh token (7 days). Token revocation backed by Redis blacklist.
 - **Daily Quotas & Limits**:
-  - Daily TTS character limit: `daily_tts_char_limit` (Redis atomic counter, resets at midnight).
-  - Rate limit: `rate_limit_requests_per_minute` per user / key.
-  - Cloned voice slot limit: strictly 3 slots per user (configurable in Settings).
-  - Maximum input character length checks: `max_speech_char_limit` for speech and `max_preview_char_limit` for preview.
+  - Configurable Default User Limits (`default_user_limits` in `settings.json`): `max_cloned_slots` (3), `daily_tts_char_limit` (50,000), `rate_limit_requests_per_minute` (60), `max_speech_char_limit` (2,000), `max_preview_char_limit` (250), `max_concurrent_tts` (1), `max_queue_waiters` (1).
+  - Stamped directly onto database `User` records upon registration, allowing customized quotas per user.
+  - Server Concurrency (`concurrency` in `settings.json`): Global infrastructure capabilities across worker nodes (`max_concurrent_tts`, `max_queue_waiters`).
 - **Concurrency**:
   - TTS (`/v1/audio/speech`): Controlled by `tts_slot_guard` (asyncio.Semaphore, dynamic resizing) with queueing and client disconnect cancellation.
   - Audio Cache HIT: Served in `< 10ms` from disk, quota-exempt.

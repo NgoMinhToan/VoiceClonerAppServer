@@ -45,10 +45,20 @@ class ModelWorkerConfig(BaseModel):
 class ConcurrencyConfig(BaseModel):
     max_concurrent_tts: int = Field(2, ge=1, le=64)
     max_queue_waiters: int = Field(8, ge=0, le=256)
-    daily_tts_char_limit: int = Field(100000, ge=1000)
-    rate_limit_requests_per_minute: int = Field(60, ge=1)
-    max_preview_char_limit: int = Field(250, ge=10, le=5000)
+    daily_tts_char_limit: Optional[int] = Field(100000, ge=1000)
+    rate_limit_requests_per_minute: Optional[int] = Field(60, ge=1)
+    max_preview_char_limit: Optional[int] = Field(250, ge=10, le=5000)
+    max_speech_char_limit: Optional[int] = Field(2000, ge=100, le=10000)
+
+
+class DefaultUserLimitsConfig(BaseModel):
+    max_cloned_slots: int = Field(3, ge=1, le=100)
+    daily_tts_char_limit: int = Field(50000, ge=1000)
+    rate_limit_requests_per_minute: int = Field(60, ge=1, le=1000)
     max_speech_char_limit: int = Field(2000, ge=100, le=10000)
+    max_preview_char_limit: int = Field(250, ge=10, le=5000)
+    max_concurrent_tts: int = Field(1, ge=1, le=64)
+    max_queue_waiters: int = Field(1, ge=0, le=256)
 
 
 class AudioCacheConfig(BaseModel):
@@ -62,6 +72,7 @@ class AppSettings(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     client_api_keys: List[ClientApiKeyConfig] = Field(default_factory=list)
     model_workers: List[ModelWorkerConfig] = Field(default_factory=list)
+    default_user_limits: DefaultUserLimitsConfig = Field(default_factory=DefaultUserLimitsConfig)
     concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
     audio_cache: AudioCacheConfig = Field(default_factory=AudioCacheConfig)
 

@@ -37,6 +37,7 @@ class CreateClientKeyRequest(BaseModel):
 class UpdateSettingsRequest(BaseModel):
     server: Optional[Dict[str, Any]] = None
     security: Optional[Dict[str, Any]] = None
+    default_user_limits: Optional[Dict[str, Any]] = None
     concurrency: Optional[Dict[str, Any]] = None
     audio_cache: Optional[Dict[str, Any]] = None
     model_workers: Optional[List[Dict[str, Any]]] = None
