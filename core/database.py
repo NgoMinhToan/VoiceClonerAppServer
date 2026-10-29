@@ -46,6 +46,23 @@ async def init_db():
                             if count == 0:
                                 sync_conn.execute(text(f"DROP TABLE {tbl}"))
                                 Base.metadata.tables[tbl].create(sync_conn)
+
+                    # Ensure all new user limit columns exist on users table
+                    try:
+                        user_cols = {row[1] for row in sync_conn.execute(text("PRAGMA table_info(users)")).fetchall()}
+                        new_cols = {
+                            "daily_tts_char_limit": "INTEGER NOT NULL DEFAULT 50000",
+                            "rate_limit_requests_per_minute": "INTEGER NOT NULL DEFAULT 60",
+                            "max_speech_char_limit": "INTEGER NOT NULL DEFAULT 2000",
+                            "max_preview_char_limit": "INTEGER NOT NULL DEFAULT 250",
+                            "max_concurrent_tts": "INTEGER NOT NULL DEFAULT 1",
+                            "max_queue_waiters": "INTEGER NOT NULL DEFAULT 1",
+                        }
+                        for col_name, col_type in new_cols.items():
+                            if col_name not in user_cols:
+                                sync_conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+                    except Exception as me:
+                        logger.warning(f"Error checking/migrating users table columns: {me}")
                 await conn.run_sync(_migrate_sqlite_schema)
         logger.info(f"Database schema initialized via {engine.url}")
     except Exception as e:

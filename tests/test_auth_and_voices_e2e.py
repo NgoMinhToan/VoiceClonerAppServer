@@ -77,6 +77,21 @@ def test_auth_full_lifecycle():
     assert logout_res.status_code == 200
 
 
+def test_user_registration_inherits_default_limits():
+    email = f"limits_inherit_{uuid.uuid4().hex[:8]}@example.com"
+    res = client.post(
+        "/v1/auth/register",
+        json={"email": email, "password": "password123", "full_name": "Limits Inherit"}
+    )
+    assert res.status_code == 200
+    token = res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    me = client.get("/v1/auth/me", headers=headers).json()
+    assert me["daily_tts_chars_limit"] == 50000
+    assert me["max_cloned_slots"] == 3
+
+
 def test_voices_list_and_clone_flow(monkeypatch):
     from VoiceClonerAppServer.services import model_dispatcher
 

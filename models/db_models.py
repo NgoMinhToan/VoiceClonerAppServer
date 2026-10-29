@@ -50,6 +50,12 @@ class User(Base):
     full_name = Column(String(255), nullable=False)
     avatar_url = Column(String(512), nullable=True)
     max_cloned_slots = Column(Integer, default=3, nullable=False)
+    daily_tts_char_limit = Column(Integer, default=50000, nullable=False)
+    rate_limit_requests_per_minute = Column(Integer, default=60, nullable=False)
+    max_speech_char_limit = Column(Integer, default=2000, nullable=False)
+    max_preview_char_limit = Column(Integer, default=250, nullable=False)
+    max_concurrent_tts = Column(Integer, default=1, nullable=False)
+    max_queue_waiters = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 

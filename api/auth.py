@@ -53,13 +53,20 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
         )
 
     user_id = str(uuid.uuid4())
+    default_limits = settings_manager.get_settings().default_user_limits
     user = User(
         id=user_id,
         email=req.email,
         password_hash=hash_password(req.password),
         full_name=req.full_name.strip(),
         auth_provider="local",
-        max_cloned_slots=3,
+        max_cloned_slots=default_limits.max_cloned_slots,
+        daily_tts_char_limit=default_limits.daily_tts_char_limit,
+        rate_limit_requests_per_minute=default_limits.rate_limit_requests_per_minute,
+        max_speech_char_limit=default_limits.max_speech_char_limit,
+        max_preview_char_limit=default_limits.max_preview_char_limit,
+        max_concurrent_tts=default_limits.max_concurrent_tts,
+        max_queue_waiters=default_limits.max_queue_waiters,
     )
     db.add(user)
     await db.commit()
@@ -143,6 +150,7 @@ async def google_auth(req: GoogleAuthRequest, db: AsyncSession = Depends(get_db)
     user = res.scalar_one_or_none()
 
     if not user:
+        default_limits = settings_manager.get_settings().default_user_limits
         user = User(
             id=str(uuid.uuid4()),
             email=email,
@@ -150,7 +158,13 @@ async def google_auth(req: GoogleAuthRequest, db: AsyncSession = Depends(get_db)
             full_name=full_name,
             avatar_url=avatar_url,
             auth_provider="google",
-            max_cloned_slots=3,
+            max_cloned_slots=default_limits.max_cloned_slots,
+            daily_tts_char_limit=default_limits.daily_tts_char_limit,
+            rate_limit_requests_per_minute=default_limits.rate_limit_requests_per_minute,
+            max_speech_char_limit=default_limits.max_speech_char_limit,
+            max_preview_char_limit=default_limits.max_preview_char_limit,
+            max_concurrent_tts=default_limits.max_concurrent_tts,
+            max_queue_waiters=default_limits.max_queue_waiters,
         )
         db.add(user)
         await db.commit()
@@ -225,7 +239,7 @@ async def get_me(
     cloned_count = count_res.scalar() or 0
 
     daily_used = await get_daily_usage(current_user.id)
-    daily_limit = settings_manager.get_settings().concurrency.daily_tts_char_limit
+    daily_limit = getattr(current_user, "daily_tts_char_limit", None) or settings_manager.get_settings().default_user_limits.daily_tts_char_limit
 
     return UserProfileResponse(
         id=current_user.id,
