@@ -2575,20 +2575,30 @@ async function fetchSettings() {
         if (reqKey) reqKey.checked = data.security.require_client_api_key ?? true;
       }
 
-      // Concurrency & System Limits
+      // Default User Limits
+      if (data.default_user_limits) {
+        const slots = document.getElementById('defaultUserSlotsInput');
+        if (slots) slots.value = data.default_user_limits.max_cloned_slots ?? 3;
+        const daily = document.getElementById('defaultUserDailyTtsLimitInput');
+        if (daily) daily.value = data.default_user_limits.daily_tts_char_limit ?? 50000;
+        const rate = document.getElementById('defaultUserRateLimitInput');
+        if (rate) rate.value = data.default_user_limits.rate_limit_requests_per_minute ?? 60;
+        const speech = document.getElementById('defaultUserSpeechLimitInput');
+        if (speech) speech.value = data.default_user_limits.max_speech_char_limit ?? 2000;
+        const prev = document.getElementById('defaultUserPreviewLimitInput');
+        if (prev) prev.value = data.default_user_limits.max_preview_char_limit ?? 250;
+        const tts = document.getElementById('defaultUserConcurrentInput');
+        if (tts) tts.value = data.default_user_limits.max_concurrent_tts ?? 1;
+        const queue = document.getElementById('defaultUserQueueInput');
+        if (queue) queue.value = data.default_user_limits.max_queue_waiters ?? 1;
+      }
+
+      // Server Concurrency Infrastructure
       if (data.concurrency) {
-        const speech = document.getElementById('maxSpeechCharLimitInput');
-        if (speech) speech.value = data.concurrency.max_speech_char_limit ?? 2000;
-        const prev = document.getElementById('maxPreviewCharLimitInput');
-        if (prev) prev.value = data.concurrency.max_preview_char_limit ?? 250;
-        const daily = document.getElementById('dailyTtsCharLimitInput');
-        if (daily) daily.value = data.concurrency.daily_tts_char_limit ?? 100000;
-        const rate = document.getElementById('rateLimitRequestsInput');
-        if (rate) rate.value = data.concurrency.rate_limit_requests_per_minute ?? 60;
-        const tts = document.getElementById('maxConcurrentTtsInput');
-        if (tts) tts.value = data.concurrency.max_concurrent_tts ?? 2;
-        const queue = document.getElementById('maxQueueWaitersInput');
-        if (queue) queue.value = data.concurrency.max_queue_waiters ?? 8;
+        const serverTts = document.getElementById('serverMaxConcurrentTtsInput');
+        if (serverTts) serverTts.value = data.concurrency.max_concurrent_tts ?? 2;
+        const serverQueue = document.getElementById('serverMaxQueueWaitersInput');
+        if (serverQueue) serverQueue.value = data.concurrency.max_queue_waiters ?? 8;
       }
 
       // Audio Cache
@@ -2650,36 +2660,68 @@ async function saveMgmtKeySettings() {
   }
 }
 
-async function saveSystemSettings() {
-  const speechLimit = parseInt(document.getElementById('maxSpeechCharLimitInput')?.value || '2000', 10);
-  const previewLimit = parseInt(document.getElementById('maxPreviewCharLimitInput')?.value || '250', 10);
-  const dailyLimit = parseInt(document.getElementById('dailyTtsCharLimitInput')?.value || '100000', 10);
-  const rateLimit = parseInt(document.getElementById('rateLimitRequestsInput')?.value || '60', 10);
-  const maxConcurrent = parseInt(document.getElementById('maxConcurrentTtsInput')?.value || '2', 10);
-  const maxQueue = parseInt(document.getElementById('maxQueueWaitersInput')?.value || '8', 10);
+async function saveDefaultUserLimits() {
+  const slots = parseInt(document.getElementById('defaultUserSlotsInput')?.value || '3', 10);
+  const dailyLimit = parseInt(document.getElementById('defaultUserDailyTtsLimitInput')?.value || '50000', 10);
+  const rateLimit = parseInt(document.getElementById('defaultUserRateLimitInput')?.value || '60', 10);
+  const speechLimit = parseInt(document.getElementById('defaultUserSpeechLimitInput')?.value || '2000', 10);
+  const previewLimit = parseInt(document.getElementById('defaultUserPreviewLimitInput')?.value || '250', 10);
+  const maxConcurrent = parseInt(document.getElementById('defaultUserConcurrentInput')?.value || '1', 10);
+  const maxQueue = parseInt(document.getElementById('defaultUserQueueInput')?.value || '1', 10);
 
   try {
     const res = await apiRequest('/v1/management/settings', {
       method: 'PUT',
       body: JSON.stringify({
-        concurrency: {
-          max_speech_char_limit: speechLimit,
-          max_preview_char_limit: previewLimit,
+        default_user_limits: {
+          max_cloned_slots: slots,
           daily_tts_char_limit: dailyLimit,
           rate_limit_requests_per_minute: rateLimit,
+          max_speech_char_limit: speechLimit,
+          max_preview_char_limit: previewLimit,
           max_concurrent_tts: maxConcurrent,
           max_queue_waiters: maxQueue,
         },
       }),
     });
     if (res.ok) {
-      showToast('Đã lưu cấu hình hạn mức hệ thống thành công!', 'success');
+      showToast('Đã lưu cấu hình mặc định cho tài khoản mới!', 'success');
     } else {
-      showToast('Không thể lưu cấu hình hạn mức trên server!', 'error');
+      showToast('Không thể lưu cấu hình hạn mức mặc định!', 'error');
     }
   } catch (e) {
-    showToast('Lỗi gửi cập nhật cấu hình hạn mức', 'error');
+    showToast('Lỗi gửi cập nhật cấu hình mặc định user', 'error');
   }
+}
+
+async function saveServerConcurrencySettings() {
+  const maxConcurrent = parseInt(document.getElementById('serverMaxConcurrentTtsInput')?.value || '2', 10);
+  const maxQueue = parseInt(document.getElementById('serverMaxQueueWaitersInput')?.value || '8', 10);
+
+  try {
+    const res = await apiRequest('/v1/management/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        concurrency: {
+          max_concurrent_tts: maxConcurrent,
+          max_queue_waiters: maxQueue,
+        },
+      }),
+    });
+    if (res.ok) {
+      showToast('Đã lưu cấu hình concurrency server thành công!', 'success');
+    } else {
+      showToast('Không thể lưu cấu hình concurrency server!', 'error');
+    }
+  } catch (e) {
+    showToast('Lỗi gửi cập nhật concurrency server', 'error');
+  }
+}
+
+// Keep saveSystemSettings for backward compatibility
+async function saveSystemSettings() {
+  await saveDefaultUserLimits();
+  await saveServerConcurrencySettings();
 }
 
 async function saveCacheSettings() {
@@ -2794,7 +2836,7 @@ function renderUsersTable(users) {
 function openEditUserModalById(userId) {
   const user = allUsersData.find(u => u.id === userId);
   if (!user) return;
-  openEditUserModal(user.id, user.email, user.max_cloned_slots || 3);
+  openEditUserModal(user);
 }
 
 function deleteUserAccountById(userId) {
@@ -2816,12 +2858,34 @@ async function deleteUserAccount(userId, email) {
   }
 }
 
-function openEditUserModal(id, email, slots) {
+function openEditUserModal(user, legacyEmail, legacySlots) {
   const modal = document.getElementById('editUserModal');
   if (!modal) return;
-  document.getElementById('editUserIdInput').value = id;
-  document.getElementById('editUserEmailLabel').textContent = email;
-  document.getElementById('editUserSlotsInput').value = slots;
+
+  // Support both object pass and legacy (id, email, slots) argument list
+  const userData = (typeof user === 'object' && user !== null) ? user : {
+    id: user,
+    email: legacyEmail || 'user@example.com',
+    max_cloned_slots: legacySlots || 3,
+  };
+
+  document.getElementById('editUserIdInput').value = userData.id || '';
+  document.getElementById('editUserEmailLabel').textContent = userData.email || '';
+  document.getElementById('editUserSlotsInput').value = userData.max_cloned_slots ?? 3;
+
+  const dailyEl = document.getElementById('editUserDailyLimitInput');
+  if (dailyEl) dailyEl.value = userData.daily_tts_char_limit ?? 50000;
+  const rateEl = document.getElementById('editUserRateLimitInput');
+  if (rateEl) rateEl.value = userData.rate_limit_requests_per_minute ?? 60;
+  const speechEl = document.getElementById('editUserSpeechLimitInput');
+  if (speechEl) speechEl.value = userData.max_speech_char_limit ?? 2000;
+  const previewEl = document.getElementById('editUserPreviewLimitInput');
+  if (previewEl) previewEl.value = userData.max_preview_char_limit ?? 250;
+  const concurrentEl = document.getElementById('editUserConcurrentInput');
+  if (concurrentEl) concurrentEl.value = userData.max_concurrent_tts ?? 1;
+  const queueEl = document.getElementById('editUserQueueInput');
+  if (queueEl) queueEl.value = userData.max_queue_waiters ?? 1;
+
   modal.classList.remove('hidden');
 }
 
@@ -2832,15 +2896,32 @@ function closeEditUserModal() {
 async function submitEditUser() {
   const id = document.getElementById('editUserIdInput')?.value;
   const slots = parseInt(document.getElementById('editUserSlotsInput')?.value || '3', 10);
+  const daily = parseInt(document.getElementById('editUserDailyLimitInput')?.value || '50000', 10);
+  const rate = parseInt(document.getElementById('editUserRateLimitInput')?.value || '60', 10);
+  const speech = parseInt(document.getElementById('editUserSpeechLimitInput')?.value || '2000', 10);
+  const preview = parseInt(document.getElementById('editUserPreviewLimitInput')?.value || '250', 10);
+  const concurrent = parseInt(document.getElementById('editUserConcurrentInput')?.value || '1', 10);
+  const queue = parseInt(document.getElementById('editUserQueueInput')?.value || '1', 10);
+
   try {
     const res = await apiRequest(`/v1/management/users/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ max_cloned_slots: slots }),
+      body: JSON.stringify({
+        max_cloned_slots: slots,
+        daily_tts_char_limit: daily,
+        rate_limit_requests_per_minute: rate,
+        max_speech_char_limit: speech,
+        max_preview_char_limit: preview,
+        max_concurrent_tts: concurrent,
+        max_queue_waiters: queue,
+      }),
     });
     if (res.ok) {
-      showToast('Cập nhật slot clone thành công!', 'success');
+      showToast('Cập nhật hạn mức người dùng thành công!', 'success');
       closeEditUserModal();
       fetchUsers();
+    } else {
+      showToast('Không thể cập nhật hạn mức người dùng!', 'error');
     }
   } catch (e) {
     showToast('Lỗi cập nhật người dùng!', 'error');

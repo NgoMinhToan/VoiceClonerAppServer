@@ -919,55 +919,90 @@
         </div>
       </div>
 
-      <!-- Section 3: Concurrency & Rate Limits -->
+      <!-- Section 3: Default User Limits -->
       <div class="k-card p-5 space-y-4">
         <div>
-          <h3 class="text-sm font-bold text-white">Cấu Hình Hạn Mức Speech & Preview (System Limits & Voice Synthesis)</h3>
-          <p class="text-xs text-slate-500">Thiết lập giới hạn ký tự mỗi lần chuyển văn bản, giới hạn ký tự nghe thử, hạn mức ký tự hàng ngày và tần suất gọi API.</p>
+          <h3 class="text-sm font-bold text-white">Cấu Hình Mặc Định Cho Tài Khoản Mới (Default User Limits)</h3>
+          <p class="text-xs text-slate-500">Thiết lập hạn mức mặc định gán cho mỗi tài khoản người dùng mới khi đăng ký (Slots clone, hạn mức ngày, tần suất gọi, ký tự Speech/Preview và số luồng/hàng đợi).</p>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
           <div>
-            <label class="text-slate-400 block mb-1 font-medium">Giới hạn ký tự Speech (Max Speech Chars):</label>
-            <input id="maxSpeechCharLimitInput" type="number" min="100" max="10000" value="2000" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[11px] text-slate-500 mt-1 block">Tối đa ký tự cho mỗi lần gọi /v1/audio/speech</span>
-          </div>
-
-          <div>
-            <label class="text-slate-400 block mb-1 font-medium">Giới hạn ký tự nghe thử (Max Preview Chars):</label>
-            <input id="maxPreviewCharLimitInput" type="number" min="10" max="5000" value="250" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[11px] text-slate-500 mt-1 block">Tối đa ký tự cho mỗi lần gọi /v1/voices/preview</span>
+            <label class="text-slate-400 block mb-1 font-medium">Số Slot Clone Mặc Định (Max Cloned Slots):</label>
+            <input id="defaultUserSlotsInput" type="number" min="1" max="100" value="3" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[11px] text-slate-500 mt-1 block">Số lượng giọng clone tối đa cấp cho tài khoản mới</span>
           </div>
 
           <div>
             <label class="text-slate-400 block mb-1 font-medium">Hạn mức TTS hàng ngày (Daily Char Limit):</label>
-            <input id="dailyTtsCharLimitInput" type="number" min="1000" value="100000" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <input id="defaultUserDailyTtsLimitInput" type="number" min="1000" value="50000" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
             <span class="text-[11px] text-slate-500 mt-1 block">Ký tự tối đa mỗi user được sử dụng trong 1 ngày</span>
           </div>
 
           <div>
             <label class="text-slate-400 block mb-1 font-medium">Giới hạn tần suất gọi (Rate Limit / Min):</label>
-            <input id="rateLimitRequestsInput" type="number" min="1" max="1000" value="60" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <input id="defaultUserRateLimitInput" type="number" min="1" max="1000" value="60" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
             <span class="text-[11px] text-slate-500 mt-1 block">Số request tối đa mỗi user trong 1 phút</span>
           </div>
 
           <div>
-            <label class="text-slate-400 block mb-1 font-medium">Số luồng TTS đồng thời (Max Concurrent TTS):</label>
-            <input id="maxConcurrentTtsInput" type="number" min="1" max="64" value="2" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[11px] text-slate-500 mt-1 block">Số request inference chạy song song tối đa</span>
+            <label class="text-slate-400 block mb-1 font-medium">Giới hạn ký tự Speech (Max Speech Chars):</label>
+            <input id="defaultUserSpeechLimitInput" type="number" min="100" max="10000" value="2000" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[11px] text-slate-500 mt-1 block">Tối đa ký tự cho mỗi lần gọi /v1/audio/speech</span>
           </div>
 
           <div>
-            <label class="text-slate-400 block mb-1 font-medium">Hàng đợi chờ tối đa (Max Queue Waiters):</label>
-            <input id="maxQueueWaitersInput" type="number" min="0" max="256" value="8" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
-            <span class="text-[11px] text-slate-500 mt-1 block">Số lượng request được xếp hàng chờ worker</span>
+            <label class="text-slate-400 block mb-1 font-medium">Giới hạn ký tự nghe thử (Max Preview Chars):</label>
+            <input id="defaultUserPreviewLimitInput" type="number" min="10" max="5000" value="250" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[11px] text-slate-500 mt-1 block">Tối đa ký tự cho mỗi lần gọi /v1/voices/preview</span>
+          </div>
+
+          <div>
+            <label class="text-slate-400 block mb-1 font-medium">Số luồng TTS mỗi User (Max Concurrent TTS):</label>
+            <input id="defaultUserConcurrentInput" type="number" min="1" max="64" value="1" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[11px] text-slate-500 mt-1 block">Số request inference chạy song song cho 1 user</span>
+          </div>
+
+          <div>
+            <label class="text-slate-400 block mb-1 font-medium">Hàng đợi chờ mỗi User (Max Queue Waiters):</label>
+            <input id="defaultUserQueueInput" type="number" min="0" max="256" value="1" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[11px] text-slate-500 mt-1 block">Số request xếp hàng chờ worker cho 1 user</span>
           </div>
         </div>
 
         <div class="flex justify-end pt-1">
-          <button onclick="saveSystemSettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-md shadow-indigo-600/20 transition">
+          <button onclick="saveDefaultUserLimits()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-md shadow-indigo-600/20 transition">
             <i class="fa-solid fa-floppy-disk"></i>
-            <span>Lưu Cấu Hình Hạn Mức</span>
+            <span>Lưu Cấu Hình Mặc Định User</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Section 3b: Server Concurrency Infrastructure -->
+      <div class="k-card p-5 space-y-4">
+        <div>
+          <h3 class="text-sm font-bold text-white">Năng Lực Xử Lý Toàn Server (Server Infrastructure & Concurrency)</h3>
+          <p class="text-xs text-slate-500">Thiết lập tổng số luồng suy luận AI song song và dung lượng hàng đợi tối đa của toàn bộ cụm worker trên server.</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+          <div>
+            <label class="text-slate-400 block mb-1 font-medium">Số luồng TTS song song toàn server (Max Server Streams):</label>
+            <input id="serverMaxConcurrentTtsInput" type="number" min="1" max="64" value="2" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[11px] text-slate-500 mt-1 block">Tổng request inference song song tối đa trên toàn server</span>
+          </div>
+
+          <div>
+            <label class="text-slate-400 block mb-1 font-medium">Hàng đợi chờ tối đa toàn server (Max Server Queue):</label>
+            <input id="serverMaxQueueWaitersInput" type="number" min="0" max="256" value="8" class="w-full bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+            <span class="text-[11px] text-slate-500 mt-1 block">Tổng số lượng request xếp hàng chờ worker toàn server</span>
+          </div>
+        </div>
+
+        <div class="flex justify-end pt-1">
+          <button onclick="saveServerConcurrencySettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-md shadow-indigo-600/20 transition">
+            <i class="fa-solid fa-server"></i>
+            <span>Lưu Cấu Hình Concurrency Server</span>
           </button>
         </div>
       </div>
@@ -1141,15 +1176,47 @@
           <i class="fa-solid fa-user-pen"></i>
         </div>
         <div>
-          <h3 class="font-bold text-sm text-white">Điều Chỉnh Slot Clone Giọng</h3>
+          <h3 class="font-bold text-sm text-white">Chỉnh Sửa Hạn Mức Tài Khoản</h3>
           <p class="text-xs text-slate-400" id="editUserEmailLabel">user@example.com</p>
         </div>
       </div>
       <div class="space-y-3 text-xs">
         <input type="hidden" id="editUserIdInput">
-        <div>
-          <label class="text-slate-400 block mb-1">Số lượng slot clone giọng tối đa (1-100):</label>
-          <input id="editUserSlotsInput" type="number" min="1" max="100" class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-slate-400 block mb-1">Slot clone giọng (1-100):</label>
+            <input id="editUserSlotsInput" type="number" min="1" max="100" class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">Hạn mức TTS/ngày (Chars):</label>
+            <input id="editUserDailyLimitInput" type="number" min="1000" class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-slate-400 block mb-1">Rate limit (Req/Min):</label>
+            <input id="editUserRateLimitInput" type="number" min="1" max="1000" class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">Max Speech Chars:</label>
+            <input id="editUserSpeechLimitInput" type="number" min="100" max="10000" class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="text-slate-400 block mb-1">Max Preview Chars:</label>
+            <input id="editUserPreviewLimitInput" type="number" min="10" max="5000" class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">Max Concurrent:</label>
+            <input id="editUserConcurrentInput" type="number" min="1" max="64" class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="text-slate-400 block mb-1">Max Queue:</label>
+            <input id="editUserQueueInput" type="number" min="0" max="256" class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-white font-mono focus:outline-none focus:border-indigo-500">
+          </div>
         </div>
       </div>
       <div class="flex justify-end space-x-2 pt-2">

@@ -42,8 +42,16 @@ def test_dashboard_html_contains_keeper_tabs():
     assert "tab-btn-settings" in html
     assert "chartTokenUsageAnalysis" in html
     assert "chartAnalysisComposition" in html
-    assert "maxPreviewCharLimitInput" in html
-    assert "maxSpeechCharLimitInput" in html
+    assert "defaultUserSlotsInput" in html
+    assert "defaultUserDailyTtsLimitInput" in html
+    assert "defaultUserRateLimitInput" in html
+    assert "defaultUserSpeechLimitInput" in html
+    assert "defaultUserPreviewLimitInput" in html
+    assert "defaultUserConcurrentInput" in html
+    assert "defaultUserQueueInput" in html
+    assert "serverMaxConcurrentTtsInput" in html
+    assert "serverMaxQueueWaitersInput" in html
+    assert "editUserDailyLimitInput" in html
     assert "CLIProxyAPI" not in html
     assert "tab-btn-ranking" not in html
 
@@ -58,6 +66,8 @@ def test_dashboard_js_implements_keeper_logic():
     assert "initHeatmaps" in js
     assert "chartTrendsMain" in js
     assert "initAnalysisTokenUsageChart" in js
+    assert "saveDefaultUserLimits" in js
+    assert "saveServerConcurrencySettings" in js
     assert "initAnalysisCompositionChart" in js
     assert "initAnalysisLatencyChart" in js
     assert "saveSystemSettings" in js
