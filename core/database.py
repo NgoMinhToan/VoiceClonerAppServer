@@ -31,39 +31,56 @@ engine = _build_engine(DATABASE_URL)
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+def _migrate_schema(sync_conn):
+    from sqlalchemy import text
+    url_str = str(sync_conn.engine.url)
+
+    new_cols = {
+        "daily_tts_char_limit": "INTEGER NOT NULL DEFAULT 50000",
+        "rate_limit_requests_per_minute": "INTEGER NOT NULL DEFAULT 60",
+        "max_speech_char_limit": "INTEGER NOT NULL DEFAULT 2000",
+        "max_preview_char_limit": "INTEGER NOT NULL DEFAULT 250",
+        "max_concurrent_tts": "INTEGER NOT NULL DEFAULT 1",
+        "max_queue_waiters": "INTEGER NOT NULL DEFAULT 1",
+    }
+
+    # 1. PostgreSQL Schema Migration
+    if "postgres" in url_str or "asyncpg" in url_str:
+        for col_name, col_type in new_cols.items():
+            try:
+                sync_conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col_name} {col_type};"))
+            except Exception as pge:
+                logger.warning(f"Notice running PostgreSQL ALTER TABLE for {col_name}: {pge}")
+
+    # 2. SQLite Schema Migration
+    elif "sqlite" in url_str:
+        for tbl in ("api_usage_logs", "daily_usages"):
+            try:
+                res = sync_conn.execute(text(f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{tbl}'")).fetchone()
+                if res and res[0] and "BIGINT" in res[0]:
+                    count = sync_conn.execute(text(f"SELECT COUNT(*) FROM {tbl}")).fetchone()[0]
+                    if count == 0:
+                        sync_conn.execute(text(f"DROP TABLE {tbl}"))
+                        Base.metadata.tables[tbl].create(sync_conn)
+            except Exception as se:
+                logger.warning(f"Error checking SQLite table {tbl}: {se}")
+
+        # Ensure all new user limit columns exist on users table in SQLite
+        try:
+            user_cols = {row[1] for row in sync_conn.execute(text("PRAGMA table_info(users)")).fetchall()}
+            for col_name, col_type in new_cols.items():
+                if col_name not in user_cols:
+                    sync_conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+        except Exception as me:
+            logger.warning(f"Error checking/migrating users table columns in SQLite: {me}")
+
+
 async def init_db():
     global engine
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-            if str(engine.url).startswith("sqlite"):
-                from sqlalchemy import text
-                def _migrate_sqlite_schema(sync_conn):
-                    for tbl in ("api_usage_logs", "daily_usages"):
-                        res = sync_conn.execute(text(f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{tbl}'")).fetchone()
-                        if res and res[0] and "BIGINT" in res[0]:
-                            count = sync_conn.execute(text(f"SELECT COUNT(*) FROM {tbl}")).fetchone()[0]
-                            if count == 0:
-                                sync_conn.execute(text(f"DROP TABLE {tbl}"))
-                                Base.metadata.tables[tbl].create(sync_conn)
-
-                    # Ensure all new user limit columns exist on users table
-                    try:
-                        user_cols = {row[1] for row in sync_conn.execute(text("PRAGMA table_info(users)")).fetchall()}
-                        new_cols = {
-                            "daily_tts_char_limit": "INTEGER NOT NULL DEFAULT 50000",
-                            "rate_limit_requests_per_minute": "INTEGER NOT NULL DEFAULT 60",
-                            "max_speech_char_limit": "INTEGER NOT NULL DEFAULT 2000",
-                            "max_preview_char_limit": "INTEGER NOT NULL DEFAULT 250",
-                            "max_concurrent_tts": "INTEGER NOT NULL DEFAULT 1",
-                            "max_queue_waiters": "INTEGER NOT NULL DEFAULT 1",
-                        }
-                        for col_name, col_type in new_cols.items():
-                            if col_name not in user_cols:
-                                sync_conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
-                    except Exception as me:
-                        logger.warning(f"Error checking/migrating users table columns: {me}")
-                await conn.run_sync(_migrate_sqlite_schema)
+            await conn.run_sync(_migrate_schema)
         logger.info(f"Database schema initialized via {engine.url}")
     except Exception as e:
         if not str(engine.url).startswith("sqlite"):
@@ -76,6 +93,7 @@ async def init_db():
             AsyncSessionLocal.configure(bind=engine)
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(_migrate_schema)
             logger.info("Database schema initialized with SQLite fallback.")
         else:
             logger.error(f"Failed to initialize database: {e}")
