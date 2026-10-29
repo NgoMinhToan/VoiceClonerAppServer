@@ -79,6 +79,60 @@ def test_user_management_api_flow():
     assert del_res.status_code == 200
 
 
+def test_management_update_user_all_limits():
+    m_key = settings_manager.get_settings().security.management_key
+    email = f"mgmt_limits_{uuid.uuid4().hex[:8]}@example.com"
+    reg = client.post(
+        "/v1/auth/register",
+        headers={"X-API-Key": "vc_live_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"},
+        json={"email": email, "password": "password123", "full_name": "Mgmt Limits"}
+    )
+    assert reg.status_code == 200
+    user_id = reg.json()["user"]["id"]
+
+    # Verify initial default limits appear in GET /v1/management/users
+    list_res = client.get("/v1/management/users", headers={"X-Management-Key": m_key})
+    assert list_res.status_code == 200
+    user_entry = next((u for u in list_res.json() if u["id"] == user_id), None)
+    assert user_entry is not None
+    assert user_entry["max_cloned_slots"] == 3
+    assert user_entry["daily_tts_char_limit"] == 50000
+    assert user_entry["rate_limit_requests_per_minute"] == 60
+    assert user_entry["max_speech_char_limit"] == 2000
+    assert user_entry["max_preview_char_limit"] == 250
+    assert user_entry["max_concurrent_tts"] == 1
+    assert user_entry["max_queue_waiters"] == 1
+
+    patch_res = client.patch(
+        f"/v1/management/users/{user_id}",
+        headers={"X-Management-Key": m_key},
+        json={
+            "max_cloned_slots": 7,
+            "daily_tts_char_limit": 150000,
+            "rate_limit_requests_per_minute": 120,
+            "max_speech_char_limit": 4000,
+            "max_preview_char_limit": 400,
+            "max_concurrent_tts": 3,
+            "max_queue_waiters": 4,
+        }
+    )
+    assert patch_res.status_code == 200
+    data = patch_res.json()
+    assert data["max_cloned_slots"] == 7
+    assert data["daily_tts_char_limit"] == 150000
+    assert data["rate_limit_requests_per_minute"] == 120
+    assert data["max_speech_char_limit"] == 4000
+    assert data["max_preview_char_limit"] == 400
+    assert data["max_concurrent_tts"] == 3
+    assert data["max_queue_waiters"] == 4
+
+    # Verify GET /v1/management/users returns updated values
+    list_res2 = client.get("/v1/management/users", headers={"X-Management-Key": m_key})
+    u_updated = next((u for u in list_res2.json() if u["id"] == user_id), None)
+    assert u_updated["daily_tts_char_limit"] == 150000
+    assert u_updated["max_concurrent_tts"] == 3
+
+
 def test_management_users_returns_accurate_slots_and_tts_chars(monkeypatch):
     import time
     from VoiceClonerAppServer.models.db_models import Voice, utc_now

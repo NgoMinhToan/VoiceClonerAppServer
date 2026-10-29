@@ -58,6 +58,12 @@ class CreateWorkerRequest(BaseModel):
 
 class UpdateUserRequest(BaseModel):
     max_cloned_slots: Optional[int] = Field(None, ge=1, le=100)
+    daily_tts_char_limit: Optional[int] = Field(None, ge=1000)
+    rate_limit_requests_per_minute: Optional[int] = Field(None, ge=1, le=1000)
+    max_speech_char_limit: Optional[int] = Field(None, ge=100, le=10000)
+    max_preview_char_limit: Optional[int] = Field(None, ge=10, le=5000)
+    max_concurrent_tts: Optional[int] = Field(None, ge=1, le=64)
+    max_queue_waiters: Optional[int] = Field(None, ge=0, le=256)
     full_name: Optional[str] = Field(None, min_length=1, max_length=255)
 
 
@@ -314,6 +320,7 @@ async def list_users():
                 usage_res = await session.execute(usage_query)
                 chars_today = usage_res.scalar_one_or_none() or 0
 
+            default_limits = settings_manager.get_settings().default_user_limits
             results.append({
                 "id": u.id,
                 "email": u.email,
@@ -321,7 +328,13 @@ async def list_users():
                 "auth_provider": u.auth_provider,
                 "avatar_url": u.avatar_url,
                 "cloned_voices_count": cloned_count,
-                "max_cloned_slots": u.max_cloned_slots,
+                "max_cloned_slots": getattr(u, "max_cloned_slots", 3) or default_limits.max_cloned_slots,
+                "daily_tts_char_limit": getattr(u, "daily_tts_char_limit", 50000) or default_limits.daily_tts_char_limit,
+                "rate_limit_requests_per_minute": getattr(u, "rate_limit_requests_per_minute", 60) or default_limits.rate_limit_requests_per_minute,
+                "max_speech_char_limit": getattr(u, "max_speech_char_limit", 2000) or default_limits.max_speech_char_limit,
+                "max_preview_char_limit": getattr(u, "max_preview_char_limit", 250) or default_limits.max_preview_char_limit,
+                "max_concurrent_tts": getattr(u, "max_concurrent_tts", 1) or default_limits.max_concurrent_tts,
+                "max_queue_waiters": getattr(u, "max_queue_waiters", 1) or default_limits.max_queue_waiters,
                 "tts_chars_today": chars_today,
                 "created_at": u.created_at.isoformat() if u.created_at else None,
             })
@@ -338,6 +351,18 @@ async def update_user(user_id: str, payload: UpdateUserRequest):
 
         if payload.max_cloned_slots is not None:
             user.max_cloned_slots = payload.max_cloned_slots
+        if payload.daily_tts_char_limit is not None:
+            user.daily_tts_char_limit = payload.daily_tts_char_limit
+        if payload.rate_limit_requests_per_minute is not None:
+            user.rate_limit_requests_per_minute = payload.rate_limit_requests_per_minute
+        if payload.max_speech_char_limit is not None:
+            user.max_speech_char_limit = payload.max_speech_char_limit
+        if payload.max_preview_char_limit is not None:
+            user.max_preview_char_limit = payload.max_preview_char_limit
+        if payload.max_concurrent_tts is not None:
+            user.max_concurrent_tts = payload.max_concurrent_tts
+        if payload.max_queue_waiters is not None:
+            user.max_queue_waiters = payload.max_queue_waiters
         if payload.full_name is not None:
             user.full_name = payload.full_name
 
@@ -348,6 +373,12 @@ async def update_user(user_id: str, payload: UpdateUserRequest):
             "id": user.id,
             "full_name": user.full_name,
             "max_cloned_slots": user.max_cloned_slots,
+            "daily_tts_char_limit": user.daily_tts_char_limit,
+            "rate_limit_requests_per_minute": user.rate_limit_requests_per_minute,
+            "max_speech_char_limit": user.max_speech_char_limit,
+            "max_preview_char_limit": user.max_preview_char_limit,
+            "max_concurrent_tts": user.max_concurrent_tts,
+            "max_queue_waiters": user.max_queue_waiters,
         }
 
 
