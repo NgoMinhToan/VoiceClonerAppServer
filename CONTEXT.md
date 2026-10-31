@@ -36,6 +36,18 @@
 
 ## 3. Completed Work
 
+### Exposure of Full Per-User Quotas & Limits in Client Auth APIs (Oct 2026)
+- **Profile & Auth Responses Synchronization**:
+  - Extended `UserProfileResponse` (`GET /v1/auth/me`) and `UserResponse` (`POST /v1/auth/register`, `/login`, `/google`) in `models/schemas.py` to return all user-specific quotas and limits:
+    - `daily_tts_char_limit` and `daily_tts_chars_limit` (backward-compatible aliases)
+    - `max_speech_char_limit` (maximum text length allowed per synthesis call)
+    - `max_preview_char_limit` (maximum text length allowed per sample preview)
+    - `rate_limit_requests_per_minute` (user-specific sliding window rate limit)
+    - `max_concurrent_tts` (maximum concurrent worker slots for user)
+    - `max_queue_waiters` (maximum queued synthesis jobs for user)
+  - Updated `api/auth.py` helper `build_user_response()` and `get_me()` to dynamically read values from database `User` records with graceful fallback to `default_user_limits`.
+  - Added end-to-end integration test coverage (`test_auth_me_reflects_updated_user_limits`, `test_user_registration_inherits_default_limits` in `test_auth_and_voices_e2e.py`). All 62/62 server unit tests passing with 100% success rate.
+
 ### Management Dashboard Revamp & Analysis Tab Integration (Oct 2026)
 - **Restoration of Specialized Analysis Tab (`#content-analysis`)**:
   - Implemented 6 analytical visualization cards modeled after `cpa-usage-keeper`'s `AnalysisPanel.tsx`:

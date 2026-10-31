@@ -63,7 +63,7 @@
 | `POST` | `/v1/auth/google` | Mở / Client Key | Đăng nhập bằng Google ID Token |
 | `POST` | `/v1/auth/refresh` | Mở / Client Key | Cấp mới `access_token` từ `refresh_token` |
 | `POST` | `/v1/auth/logout` | `Bearer <JWT>` | Đăng xuất và đưa token vào danh sách đen (Redis) |
-| `GET` | `/v1/auth/me` | `Bearer <JWT>` | Lấy thông tin user, số slot clone đã dùng, ký tự đã dùng hôm nay |
+| `GET` | `/v1/auth/me` | `Bearer <JWT>` | Lấy thông tin user, số slot clone, ký tự đã dùng và toàn bộ 7 giới hạn quota cá nhân |
 
 ### 2.2 Nhóm Giọng Nói (`/v1/voices`)
 | Phương thức | Endpoint | Header / Auth | Mô tả |

@@ -49,12 +49,12 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 ## 4. Danh Sách API Endpoints Chi Tiết
 
 ### 4.1 Xác Thực & Tài Khoản Người Dùng (`/v1/auth`)
-- `POST /v1/auth/register`: Đăng ký tài khoản (body: `{email, password, full_name}`).
-- `POST /v1/auth/login`: Đăng nhập lấy access/refresh token (body: `{email, password}`).
-- `POST /v1/auth/google`: Đăng nhập Google ID token (body: `{id_token}`).
+- `POST /v1/auth/register`: Đăng ký tài khoản (body: `{email, password, full_name}`). Trả về kèm token và object user chứa đầy đủ các hạn mức quota cá nhân.
+- `POST /v1/auth/login`: Đăng nhập lấy access/refresh token (body: `{email, password}`). Trả về kèm token và object user chứa đầy đủ các hạn mức quota cá nhân.
+- `POST /v1/auth/google`: Đăng nhập Google ID token (body: `{id_token}`). Trả về kèm token và object user chứa đầy đủ các hạn mức quota cá nhân.
 - `POST /v1/auth/refresh`: Cấp mới token (body: `{refresh_token}`).
 - `POST /v1/auth/logout`: Đăng xuất và đưa token vào Redis blacklist.
-- `GET /v1/auth/me`: Lấy thông tin tài khoản, số ký tự đã dùng trong ngày, số slot clone.
+- `GET /v1/auth/me`: Lấy thông tin tài khoản, số ký tự đã dùng trong ngày, số slot clone, cùng toàn bộ 7 hạn mức quota (`daily_tts_char_limit`, `max_speech_char_limit`, `max_preview_char_limit`, `rate_limit_requests_per_minute`, `max_concurrent_tts`, `max_queue_waiters`).
 
 ### 4.2 Thư Viện Giọng Nói & Nhân Bản Giọng (`/v1/voices`)
 - `GET /v1/voices`: Lấy danh mục giọng preset động được tổng hợp từ các upstream workers + các giọng clone riêng của user đăng nhập.

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from VoiceClonerAppServer.main import app
 from VoiceClonerAppServer.core.database import init_db
+from VoiceClonerAppServer.core.settings_manager import settings_manager
 
 client = TestClient(app, headers={"X-API-Key": "vc_live_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"})
 
@@ -85,11 +86,78 @@ def test_user_registration_inherits_default_limits():
     )
     assert res.status_code == 200
     token = res.json()["access_token"]
+    user_payload = res.json()["user"]
     headers = {"Authorization": f"Bearer {token}"}
 
+    # Verify registration response includes all limits
+    assert user_payload["daily_tts_char_limit"] == 50000
+    assert user_payload["daily_tts_chars_limit"] == 50000
+    assert user_payload["max_speech_char_limit"] == 2000
+    assert user_payload["max_preview_char_limit"] == 250
+    assert user_payload["rate_limit_requests_per_minute"] == 60
+    assert user_payload["max_concurrent_tts"] == 1
+    assert user_payload["max_queue_waiters"] == 1
+
+    # Verify GET /v1/auth/me includes all limits
     me = client.get("/v1/auth/me", headers=headers).json()
     assert me["daily_tts_chars_limit"] == 50000
+    assert me["daily_tts_char_limit"] == 50000
     assert me["max_cloned_slots"] == 3
+    assert me["max_speech_char_limit"] == 2000
+    assert me["max_preview_char_limit"] == 250
+    assert me["rate_limit_requests_per_minute"] == 60
+    assert me["max_concurrent_tts"] == 1
+    assert me["max_queue_waiters"] == 1
+
+
+def test_auth_me_reflects_updated_user_limits():
+    m_key = settings_manager.get_settings().security.management_key
+    email = f"limits_update_{uuid.uuid4().hex[:8]}@example.com"
+    reg = client.post(
+        "/v1/auth/register",
+        json={"email": email, "password": "password123", "full_name": "Limits Update"}
+    )
+    assert reg.status_code == 200
+    user_id = reg.json()["user"]["id"]
+    token = reg.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Admin updates user's custom limits
+    patch_res = client.patch(
+        f"/v1/management/users/{user_id}",
+        headers={"X-Management-Key": m_key},
+        json={
+            "max_cloned_slots": 8,
+            "daily_tts_char_limit": 120000,
+            "max_speech_char_limit": 5000,
+            "max_preview_char_limit": 400,
+            "rate_limit_requests_per_minute": 100,
+            "max_concurrent_tts": 3,
+            "max_queue_waiters": 4,
+        }
+    )
+    assert patch_res.status_code == 200
+
+    # User fetches their own profile via GET /v1/auth/me
+    me = client.get("/v1/auth/me", headers=headers).json()
+    assert me["max_cloned_slots"] == 8
+    assert me["daily_tts_char_limit"] == 120000
+    assert me["daily_tts_chars_limit"] == 120000
+    assert me["max_speech_char_limit"] == 5000
+    assert me["max_preview_char_limit"] == 400
+    assert me["rate_limit_requests_per_minute"] == 100
+    assert me["max_concurrent_tts"] == 3
+    assert me["max_queue_waiters"] == 4
+
+    # User logs in again, POST /v1/auth/login should also return updated limits in user object
+    login_res = client.post(
+        "/v1/auth/login",
+        json={"email": email, "password": "password123"}
+    )
+    assert login_res.status_code == 200
+    logged_in_user = login_res.json()["user"]
+    assert logged_in_user["max_speech_char_limit"] == 5000
+    assert logged_in_user["daily_tts_char_limit"] == 120000
 
 
 def test_voices_list_and_clone_flow(monkeypatch):

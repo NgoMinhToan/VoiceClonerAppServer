@@ -41,6 +41,27 @@ logger = logging.getLogger("VoiceClonerAppServer.AuthAPI")
 router = APIRouter(prefix="/v1/auth", tags=["Authentication"])
 
 
+def build_user_response(user: User, cloned_count: int = 0) -> UserResponse:
+    default_limits = settings_manager.get_settings().default_user_limits
+    daily_limit = getattr(user, "daily_tts_char_limit", None) or default_limits.daily_tts_char_limit
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        avatar_url=user.avatar_url,
+        auth_provider=user.auth_provider,
+        max_cloned_slots=getattr(user, "max_cloned_slots", None) or default_limits.max_cloned_slots,
+        cloned_voices_count=cloned_count,
+        daily_tts_char_limit=daily_limit,
+        daily_tts_chars_limit=daily_limit,
+        rate_limit_requests_per_minute=getattr(user, "rate_limit_requests_per_minute", None) or default_limits.rate_limit_requests_per_minute,
+        max_speech_char_limit=getattr(user, "max_speech_char_limit", None) or default_limits.max_speech_char_limit,
+        max_preview_char_limit=getattr(user, "max_preview_char_limit", None) or default_limits.max_preview_char_limit,
+        max_concurrent_tts=getattr(user, "max_concurrent_tts", None) or default_limits.max_concurrent_tts,
+        max_queue_waiters=getattr(user, "max_queue_waiters", None) or default_limits.max_queue_waiters,
+    )
+
+
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """User registration with email and password."""
@@ -75,15 +96,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
 
-    user_resp = UserResponse(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        avatar_url=user.avatar_url,
-        auth_provider=user.auth_provider,
-        max_cloned_slots=user.max_cloned_slots,
-        cloned_voices_count=0,
-    )
+    user_resp = build_user_response(user, cloned_count=0)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -114,15 +127,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
 
-    user_resp = UserResponse(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        avatar_url=user.avatar_url,
-        auth_provider=user.auth_provider,
-        max_cloned_slots=user.max_cloned_slots,
-        cloned_voices_count=cloned_count,
-    )
+    user_resp = build_user_response(user, cloned_count=cloned_count)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -177,15 +182,7 @@ async def google_auth(req: GoogleAuthRequest, db: AsyncSession = Depends(get_db)
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
 
-    user_resp = UserResponse(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        avatar_url=user.avatar_url,
-        auth_provider=user.auth_provider,
-        max_cloned_slots=user.max_cloned_slots,
-        cloned_voices_count=cloned_count,
-    )
+    user_resp = build_user_response(user, cloned_count=cloned_count)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -239,7 +236,8 @@ async def get_me(
     cloned_count = count_res.scalar() or 0
 
     daily_used = await get_daily_usage(current_user.id)
-    daily_limit = getattr(current_user, "daily_tts_char_limit", None) or settings_manager.get_settings().default_user_limits.daily_tts_char_limit
+    default_limits = settings_manager.get_settings().default_user_limits
+    daily_limit = getattr(current_user, "daily_tts_char_limit", None) or default_limits.daily_tts_char_limit
 
     return UserProfileResponse(
         id=current_user.id,
@@ -248,7 +246,13 @@ async def get_me(
         avatar_url=current_user.avatar_url,
         auth_provider=current_user.auth_provider,
         cloned_voices_count=cloned_count,
-        max_cloned_slots=current_user.max_cloned_slots,
+        max_cloned_slots=getattr(current_user, "max_cloned_slots", None) or default_limits.max_cloned_slots,
         daily_tts_chars_used=daily_used,
         daily_tts_chars_limit=daily_limit,
+        daily_tts_char_limit=daily_limit,
+        rate_limit_requests_per_minute=getattr(current_user, "rate_limit_requests_per_minute", None) or default_limits.rate_limit_requests_per_minute,
+        max_speech_char_limit=getattr(current_user, "max_speech_char_limit", None) or default_limits.max_speech_char_limit,
+        max_preview_char_limit=getattr(current_user, "max_preview_char_limit", None) or default_limits.max_preview_char_limit,
+        max_concurrent_tts=getattr(current_user, "max_concurrent_tts", None) or default_limits.max_concurrent_tts,
+        max_queue_waiters=getattr(current_user, "max_queue_waiters", None) or default_limits.max_queue_waiters,
     )

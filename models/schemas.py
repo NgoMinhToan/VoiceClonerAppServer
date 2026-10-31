@@ -48,6 +48,13 @@ class UserResponse(BaseModel):
     auth_provider: str
     max_cloned_slots: int
     cloned_voices_count: int
+    daily_tts_char_limit: int = 50000
+    daily_tts_chars_limit: int = 50000
+    rate_limit_requests_per_minute: int = 60
+    max_speech_char_limit: int = 2000
+    max_preview_char_limit: int = 250
+    max_concurrent_tts: int = 1
+    max_queue_waiters: int = 1
 
 
 class TokenResponse(BaseModel):
@@ -72,6 +79,12 @@ class UserProfileResponse(BaseModel):
     max_cloned_slots: int
     daily_tts_chars_used: int
     daily_tts_chars_limit: int
+    daily_tts_char_limit: int = 50000
+    rate_limit_requests_per_minute: int = 60
+    max_speech_char_limit: int = 2000
+    max_preview_char_limit: int = 250
+    max_concurrent_tts: int = 1
+    max_queue_waiters: int = 1
 
 
 # ---------------------------------------------------------------------------
