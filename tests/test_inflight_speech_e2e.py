@@ -495,3 +495,97 @@ async def test_client_timeout_header_triggers_unbilled_and_rollback(monkeypatch)
         assert synth_call_count == 1
 
 
+@pytest.mark.asyncio
+async def test_waiter_disconnect_or_timeout_skips_claim_and_protects_quota(monkeypatch):
+    """
+    Test 8: Both creator and waiter disconnect/time-out while synthesis is in-flight.
+    Verify:
+    1. Creator times out and quota is rolled back.
+    2. Waiter also times out (X-Client-Timeout: 0.1s while synthesis takes 0.3s) and receives 499.
+    3. Crucially: Waiter is NOT billed! Quota for waiter remains 0.
+    4. Audio is preserved as unbilled_{cache_key}.wav.
+    5. A subsequent retry by an online client claims unbilled cache, is billed, and receives HIT-CLAIMED.
+    6. Worker was called EXACTLY ONCE.
+    """
+    synth_call_count = 0
+
+    async def mock_slow_synth(**kwargs):
+        nonlocal synth_call_count
+        synth_call_count += 1
+        await asyncio.sleep(0.3)
+        wav_payload = b"RIFF" + (b"\x00" * 40) + b"waiterTimeoutPayload48kHzAudioData" * 2
+        return wav_payload, 0.3, "worker-primary-waiter-timeout"
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_slow_synth)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+        # Register Creator (User A)
+        regA = await ac.post(
+            "/v1/auth/register",
+            headers=API_KEY_HEADER,
+            json={"email": f"creator_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Creator A"},
+        )
+        tokenA = regA.json()["access_token"]
+        user_id_A = regA.json()["user"]["id"]
+        headersA = {"Authorization": f"Bearer {tokenA}", "X-Client-Timeout": "0.1", **API_KEY_HEADER}
+
+        # Register Waiter (User B)
+        regB = await ac.post(
+            "/v1/auth/register",
+            headers=API_KEY_HEADER,
+            json={"email": f"waiter_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Waiter B"},
+        )
+        tokenB = regB.json()["access_token"]
+        user_id_B = regB.json()["user"]["id"]
+        headersB = {"Authorization": f"Bearer {tokenB}", "X-Client-Timeout": "0.1", **API_KEY_HEADER}
+
+        unique_phrase = f"Cả creator và waiter đều timeout {time.time()}"
+        cache_key = cache_service.get_cache_key("minh_duc", unique_phrase, smart_pause=True)
+        payload = {"text": unique_phrase, "voice": "minh_duc"}
+
+        # 1. Creator launches synthesis (with 0.1s client timeout)
+        resA_task = asyncio.create_task(ac.post("/v1/audio/speech", headers=headersA, json=payload))
+
+        # Give creator a moment to become creator in InFlightManager
+        await asyncio.sleep(0.04)
+
+        # 2. Waiter launches synthesis (joins as waiter, with 0.1s client timeout)
+        resB_task = asyncio.create_task(ac.post("/v1/audio/speech", headers=headersB, json=payload))
+
+        resA, resB = await asyncio.gather(resA_task, resB_task)
+
+        # Both creator and waiter timed out -> both get 499
+        assert resA.status_code == 499
+        assert resB.status_code == 499
+
+        # NEITHER creator NOR waiter must be charged!
+        usedA = await get_daily_usage(user_id_A)
+        usedB = await get_daily_usage(user_id_B)
+        assert usedA == 0
+        assert usedB == 0
+
+        # Unbilled cache file must be saved on disk
+        unbilled_file = cache_service.get_unbilled_cached_file(cache_key)
+        assert unbilled_file is not None
+        assert unbilled_file.exists()
+        assert cache_service.get_cached_file(cache_key) is None
+
+        # 3. User B retries with normal timeout -> claims unbilled cache
+        retry_headersB = {"Authorization": f"Bearer {tokenB}", **API_KEY_HEADER}
+        res_retryB = await ac.post("/v1/audio/speech", headers=retry_headersB, json=payload)
+
+        assert res_retryB.status_code == 200
+        assert res_retryB.headers.get("x-cache-status") == "HIT-CLAIMED"
+
+        # Now and only now is User B billed
+        assert await get_daily_usage(user_id_B) == len(unique_phrase)
+
+        # Cache file is now promoted to standard cache
+        assert cache_service.get_unbilled_cached_file(cache_key) is None
+        assert cache_service.get_cached_file(cache_key) is not None
+
+        # Worker was called only ONCE throughout!
+        assert synth_call_count == 1
+
+
+

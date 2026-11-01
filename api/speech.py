@@ -261,69 +261,114 @@ async def create_speech(
     if not is_creator:
         t_waiter = time.perf_counter()
         logger.info(f"⏳ [IN-FLIGHT WAITER] Joined active TTS job for key {cache_key[:12]}... (user='{current_user.email}')")
+
+        waiter_disconnected = False
+
+        async def _watch_waiter_disconnect():
+            nonlocal waiter_disconnected
+            try:
+                while not waiter_disconnected:
+                    msg = await req_raw.receive()
+                    if msg.get("type") == "http.disconnect":
+                        waiter_disconnected = True
+                        logger.info(f"🔌 [WAITER DISCONNECTED] Waiter connection dropped for key {cache_key[:12]}...")
+                        break
+            except Exception:
+                pass
+
+        waiter_disconnect_watcher = asyncio.create_task(_watch_waiter_disconnect())
+
         try:
-            audio_bytes, exec_sec, worker_id = await task.future
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"In-flight task failed for waiter: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Dịch vụ tổng hợp âm thanh tạm thời không khả dụng, vui lòng thử lại sau.",
-            )
-
-        duration_ms = (time.perf_counter() - t_waiter) * 1000.0
-
-        async with task.claim_lock:
-            if task.initiator_paid or task.is_billed or (cache_service.get_cached_file(cache_key) is not None):
-                logger.info(
-                    f"⚡ [IN-FLIGHT CACHE HIT] voice='{voice_name}', text_len={char_count} -> Served as HIT from completed in-flight job"
+            try:
+                audio_bytes, exec_sec, worker_id = await task.future
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"In-flight task failed for waiter: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Dịch vụ tổng hợp âm thanh tạm thời không khả dụng, vui lòng thử lại sau.",
                 )
-                await usage_tracker.log_usage(
-                    client_key_id=client_id,
-                    client_key_name=client_name,
-                    endpoint="/v1/audio/speech",
-                    model_worker_id="cache-hit",
-                    char_count=char_count,
-                    latency_ms=duration_ms,
-                    status_code=200,
-                )
-                return _build_audio_response(audio_bytes, response_format, duration_ms, cache_status="HIT", worker_id="cache")
-            else:
-                # Initiator disconnected and not yet billed
-                current_used = await get_daily_usage(current_user.id)
-                remaining_chars = max(0, daily_limit - current_used)
-                if char_count > remaining_chars or not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
+
+            duration_sec = time.perf_counter() - t_waiter
+            duration_ms = duration_sec * 1000.0
+
+            is_waiter_timed_out = duration_sec >= client_timeout_sec
+            is_waiter_abandoned = waiter_disconnected or is_waiter_timed_out or (await req_raw.is_disconnected())
+
+            async with task.claim_lock:
+                if task.initiator_paid or task.is_billed or (cache_service.get_cached_file(cache_key) is not None):
+                    if is_waiter_abandoned:
+                        logger.info(
+                            f"🔌 [WAITER ABANDONED (CACHE HIT)] waiter duration={duration_sec:.2f}s >= timeout={client_timeout_sec:.2f}s "
+                            f"or disconnected={waiter_disconnected}; returning 499 (quota exempt)"
+                        )
+                        return Response(status_code=499)
+
+                    logger.info(
+                        f"⚡ [IN-FLIGHT CACHE HIT] voice='{voice_name}', text_len={char_count} -> Served as HIT from completed in-flight job"
                     )
+                    await usage_tracker.log_usage(
+                        client_key_id=client_id,
+                        client_key_name=client_name,
+                        endpoint="/v1/audio/speech",
+                        model_worker_id="cache-hit",
+                        char_count=char_count,
+                        latency_ms=duration_ms,
+                        status_code=200,
+                    )
+                    return _build_audio_response(audio_bytes, response_format, duration_ms, cache_status="HIT", worker_id="cache")
+                else:
+                    # Initiator disconnected and not yet billed
+                    if is_waiter_abandoned:
+                        logger.info(
+                            f"🔌 [WAITER ABANDONED (UNBILLED)] waiter duration={duration_sec:.2f}s >= timeout={client_timeout_sec:.2f}s "
+                            f"or disconnected={waiter_disconnected}; skipping claim to protect quota, returning 499"
+                        )
+                        return Response(status_code=499)
 
-                promoted = cache_service.promote_unbilled_cache(cache_key)
-                if not promoted and response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
+                    current_used = await get_daily_usage(current_user.id)
+                    remaining_chars = max(0, daily_limit - current_used)
+                    if char_count > remaining_chars or not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
+                        )
+
                     try:
-                        cache_service.save_cache(cache_key, audio_bytes)
+                        promoted = cache_service.promote_unbilled_cache(cache_key)
+                        if not promoted and response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
+                            cache_service.save_cache(cache_key, audio_bytes)
                     except Exception as ce:
                         logger.warning(f"Could not persist cache during waiter claim: {ce}")
-                task.is_billed = True
+                        await rollback_daily_quota(current_user.id, char_count)
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Lỗi lưu trữ âm thanh, vui lòng thử lại sau.",
+                        )
 
-                await _commit_daily_usage(db, current_user.id, char_count)
+                    task.is_billed = True
 
-                await usage_tracker.log_usage(
-                    client_key_id=client_id,
-                    client_key_name=client_name,
-                    endpoint="/v1/audio/speech",
-                    model_worker_id="unbilled-cache-claimed",
-                    char_count=char_count,
-                    latency_ms=duration_ms,
-                    status_code=200,
-                )
+                    await _commit_daily_usage(db, current_user.id, char_count)
 
-                logger.info(
-                    f"🏷️ [IN-FLIGHT UNBILLED CLAIMED] voice='{voice_name}', text_len={char_count} -> Billed {char_count} chars to waiter '{current_user.email}'"
-                )
+                    await usage_tracker.log_usage(
+                        client_key_id=client_id,
+                        client_key_name=client_name,
+                        endpoint="/v1/audio/speech",
+                        model_worker_id="unbilled-cache-claimed",
+                        char_count=char_count,
+                        latency_ms=duration_ms,
+                        status_code=200,
+                    )
 
-                return _build_audio_response(audio_bytes, response_format, duration_ms, cache_status="HIT-CLAIMED", worker_id="cache")
+                    logger.info(
+                        f"🏷️ [IN-FLIGHT UNBILLED CLAIMED] voice='{voice_name}', text_len={char_count} -> Billed {char_count} chars to waiter '{current_user.email}'"
+                    )
+
+                    return _build_audio_response(audio_bytes, response_format, duration_ms, cache_status="HIT-CLAIMED", worker_id="cache")
+        finally:
+            if waiter_disconnect_watcher and not waiter_disconnect_watcher.done():
+                waiter_disconnect_watcher.cancel()
 
     # Creator path: Deduct daily quota upfront for creator
     current_used = await get_daily_usage(current_user.id)
