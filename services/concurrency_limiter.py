@@ -31,7 +31,7 @@ class UserConcurrencyLimiter:
         user_id: str,
         max_concurrent: int = 1,
         max_waiters: int = 1,
-        timeout_sec: float = 60.0,
+        timeout_sec: float = 120.0,
     ):
         event: Optional[asyncio.Event] = None
         async with self._lock:

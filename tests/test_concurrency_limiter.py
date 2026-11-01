@@ -1,7 +1,9 @@
 import asyncio
+import inspect
 import pytest
 from fastapi import HTTPException
 from VoiceClonerAppServer.services.concurrency_limiter import UserConcurrencyLimiter
+from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 
 
 @pytest.mark.asyncio
@@ -55,3 +57,14 @@ async def test_concurrency_limiter_releases_on_error():
     async with limiter.acquire("user_3", max_concurrent=1, max_waiters=0):
         entered = True
     assert entered is True
+
+
+def test_gateway_timeout_defaults_are_120_seconds():
+    # 1. Check model_dispatcher http client timeout
+    client = model_dispatcher._get_http_client()
+    assert client.timeout.read == 120.0
+
+    # 2. Check UserConcurrencyLimiter.acquire default timeout_sec
+    sig = inspect.signature(UserConcurrencyLimiter.acquire)
+    assert sig.parameters["timeout_sec"].default == 120.0
+
