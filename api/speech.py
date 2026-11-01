@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import anyio
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -272,7 +273,7 @@ async def create_speech(
         duration_ms = (time.perf_counter() - t_waiter) * 1000.0
 
         async with task.claim_lock:
-            if task.initiator_paid or task.is_billed:
+            if task.initiator_paid or task.is_billed or (cache_service.get_cached_file(cache_key) is not None):
                 logger.info(
                     f"⚡ [IN-FLIGHT CACHE HIT] voice='{voice_name}', text_len={char_count} -> Served as HIT from completed in-flight job"
                 )
@@ -366,23 +367,44 @@ async def create_speech(
             audio_bytes, exec_sec, worker_id = await asyncio.shield(synth_task)
         except asyncio.CancelledError:
             client_disconnected = True
-            audio_bytes, exec_sec, worker_id = await asyncio.shield(synth_task)
+            with anyio.CancelScope(shield=True):
+                try:
+                    audio_bytes, exec_sec, worker_id = await synth_task
+                except Exception as synth_err:
+                    logger.error(f"Synthesis task failed after client disconnect: {synth_err}")
+                    if not task.future.done():
+                        task.future.set_exception(synth_err)
+                        try:
+                            _ = task.future.exception()
+                        except Exception:
+                            pass
+                    await rollback_daily_quota(current_user.id, char_count)
+                    raise asyncio.CancelledError()
+
+                logger.info(f"🔌 [CLIENT DISCONNECTED] Creator disconnected; saving unbilled cache for key {cache_key[:12]}...")
+                await rollback_daily_quota(current_user.id, char_count)
+                if response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
+                    try:
+                        cache_service.save_unbilled_cache(cache_key, audio_bytes)
+                    except Exception as ce:
+                        logger.warning(f"Could not persist unbilled audio cache: {ce}")
+                if not task.future.done():
+                    task.future.set_result((audio_bytes, exec_sec, worker_id))
+            raise asyncio.CancelledError()
 
         duration_ms = (time.perf_counter() - t0) * 1000.0
 
-        is_disconnected = client_disconnected or (await req_raw.is_disconnected())
-        if is_disconnected:
+        if await req_raw.is_disconnected():
             logger.info(f"🔌 [CLIENT DISCONNECTED] Creator disconnected; saving unbilled cache for key {cache_key[:12]}...")
-            await rollback_daily_quota(current_user.id, char_count)
-            if response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
-                try:
-                    cache_service.save_unbilled_cache(cache_key, audio_bytes)
-                except Exception as ce:
-                    logger.warning(f"Could not persist unbilled audio cache: {ce}")
-            if not task.future.done():
-                task.future.set_result((audio_bytes, exec_sec, worker_id))
-            if client_disconnected:
-                raise asyncio.CancelledError()
+            with anyio.CancelScope(shield=True):
+                await rollback_daily_quota(current_user.id, char_count)
+                if response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
+                    try:
+                        cache_service.save_unbilled_cache(cache_key, audio_bytes)
+                    except Exception as ce:
+                        logger.warning(f"Could not persist unbilled audio cache: {ce}")
+                if not task.future.done():
+                    task.future.set_result((audio_bytes, exec_sec, worker_id))
             return Response(status_code=499)
 
         # Client is online and receives audio:
@@ -445,7 +467,8 @@ async def create_speech(
             detail="Dịch vụ tổng hợp âm thanh tạm thời không khả dụng, vui lòng thử lại sau.",
         )
     finally:
-        await inflight_manager.remove(cache_key)
+        with anyio.CancelScope(shield=True):
+            await inflight_manager.remove(cache_key)
 
 
 @router.post("/v1/voices/preview")
