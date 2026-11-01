@@ -129,3 +129,75 @@ def test_preview_audio_cache_flow(monkeypatch):
 
     me2 = client.get("/v1/auth/me", headers=headers).json()
     assert me2["daily_tts_chars_used"] == chars_used_first
+
+
+def test_unbilled_cache_save_retrieve_and_promote():
+    cache_key = "test_unbilled_key_12345"
+    wav_data = b"RIFF" + (b"\x00" * 40) + b"validAudioDataPayload48kHz" * 2
+
+    # Initial state: neither standard nor unbilled cache exists
+    assert cache_service.get_cached_file(cache_key) is None
+    assert cache_service.get_unbilled_cached_file(cache_key) is None
+
+    # 1. Save as unbilled cache
+    unbilled_path = cache_service.save_unbilled_cache(cache_key, wav_data)
+    assert unbilled_path.exists()
+    assert unbilled_path.name == f"unbilled_{cache_key}.wav"
+
+    # 2. Check retrieval
+    retrieved_unbilled = cache_service.get_unbilled_cached_file(cache_key)
+    assert retrieved_unbilled is not None
+    assert retrieved_unbilled.exists()
+    # Standard cache should still return None
+    assert cache_service.get_cached_file(cache_key) is None
+
+    # 3. Promote to standard cache
+    promoted_path = cache_service.promote_unbilled_cache(cache_key)
+    assert promoted_path is not None
+    assert promoted_path.name == f"{cache_key}.wav"
+    assert promoted_path.exists()
+
+    # Unbilled cache should no longer exist, standard cache should exist
+    assert cache_service.get_unbilled_cached_file(cache_key) is None
+    assert cache_service.get_cached_file(cache_key) is not None
+
+    # Clean up
+    promoted_path.unlink()
+
+
+def test_unbilled_cache_corrupt_file_cleanup():
+    cache_key = "test_corrupt_unbilled_key_67890"
+    corrupt_data = b"RIFF" + b"\x00" * 30  # 34 bytes (<= 44 bytes)
+
+    # Directly create a corrupt unbilled file
+    unbilled_file = cache_service.cache_dir / f"unbilled_{cache_key}.wav"
+    unbilled_file.write_bytes(corrupt_data)
+    assert unbilled_file.exists()
+    assert unbilled_file.stat().st_size <= 44
+
+    # get_unbilled_cached_file should delete corrupt file and return None
+    result = cache_service.get_unbilled_cached_file(cache_key)
+    assert result is None
+    assert not unbilled_file.exists()
+
+
+def test_unbilled_cache_promote_when_dest_already_exists():
+    cache_key = "test_promote_exists_key_99999"
+    wav_data = b"RIFF" + (b"\x00" * 40) + b"validAudioDataPayload48kHz" * 2
+
+    # Save standard cache and unbilled cache
+    dest_path = cache_service.save_cache(cache_key, wav_data)
+    unbilled_path = cache_service.save_unbilled_cache(cache_key, wav_data)
+    assert dest_path.exists()
+    assert unbilled_path.exists()
+
+    # Promote when destination already exists
+    promoted_path = cache_service.promote_unbilled_cache(cache_key)
+    assert promoted_path is not None
+    assert promoted_path == dest_path
+    assert promoted_path.exists()
+    assert not unbilled_path.exists()
+
+    # Clean up
+    dest_path.unlink()
+
