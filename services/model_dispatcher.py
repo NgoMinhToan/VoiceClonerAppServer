@@ -45,7 +45,7 @@ class ModelDispatcher:
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
             limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
-            self._http_client = httpx.AsyncClient(limits=limits, timeout=60.0)
+            self._http_client = httpx.AsyncClient(limits=limits, timeout=300.0)
         return self._http_client
 
     def _get_worker_stat(self, url: str) -> Dict[str, Any]:
@@ -279,7 +279,7 @@ class ModelDispatcher:
                 f"{worker_url}/internal/v1/synthesize",
                 json=payload,
                 headers=headers,
-                timeout=60.0,
+                timeout=300.0,
             )
             if resp.status_code == 200:
                 self._record_success(worker_url)

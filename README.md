@@ -65,7 +65,7 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `DELETE /v1/voices/{voice_id}`: Xóa giọng clone và giải phóng slot quota.
 
 ### 4.3 Tổng Hợp Âm Thanh (`/v1/audio`) & Nghe Thử
-- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (kiểm tra giới hạn độ dài `max_speech_char_limit` của user, kiểm tra hạn mức còn lại, kiểm tra quota ký tự, kiểm tra rate limit per-user, xếp hàng concurrency per-user, lọc worker theo voice capability, điều phối Least-Active).
+- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (bảo vệ IDOR cho cloned voice, Audio Cache SHA-256 < 5ms, In-Flight SingleFlight request deduplication, Unbilled Cache claim khi retry, kiểm tra và trừ quota hàng ngày, kiểm tra rate limit per-user, xếp hàng concurrency per-user, lọc worker theo voice capability, điều phối Least-Active, đồng bộ timeout 120s).
 - `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng (hỗ trợ Audio Cache, giới hạn độ dài `max_preview_char_limit` của user, kiểm tra hạn mức còn lại, kiểm tra rate limit per-user, xếp hàng concurrency per-user, kiểm tra và trừ quota ký tự hàng ngày).
 
 ### 4.4 Trạng Thái Hệ Thống (`/v1/system`)
@@ -84,7 +84,34 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 
 ---
 
-## 5. Hướng Dẫn Khởi Chạy
+## 5. Cơ Chế In-Flight SingleFlight Deduplication, Unbilled Cache & Timeout 120s
+
+### 5.1 In-Flight SingleFlight Deduplication (`InFlightManager`)
+- **Triệt tiêu tải trùng lặp lên GPU worker:** Khi nhiều client hoặc cùng một client gửi đồng thời các yêu cầu tổng hợp với cùng thông số văn bản và giọng đọc (`cache_key`), Gateway áp dụng mô hình SingleFlight.
+- **Phân định vai trò Creator và Waiters:**
+  - Request đầu tiên đóng vai trò **Creator**: Giữ slot concurrency limiter, trừ quota ký tự tạm thời và gửi request tới upstream AI worker.
+  - Các request tiếp theo đóng vai trò **Waiters**: Không chiếm slot concurrency limiter, không gửi request lặp tới worker, mà chờ trên `asyncio.Future` dùng chung của Creator.
+  - Khi Creator hoàn tất thành công, audio được lưu vào cache chuẩn `{cache_key}.wav`, Future được hoàn tất; toàn bộ Waiters nhận ngay âm thanh với header `X-Cache-Status: HIT` mà không tốn quota ký tự hay thời gian suy luận GPU.
+
+### 5.2 Vòng Đời Unbilled Audio Cache (`unbilled_{cache_key}.wav`)
+- **Chống lãng phí chi phí tính toán khi client ngắt kết nối:**
+  - Nếu client Creator ngắt kết nối (client disconnect / timeout mạng) trong khi AI worker vẫn đang xử lý, Gateway dùng `asyncio.shield` để bảo vệ tiến trình inference tiếp tục hoàn tất.
+  - Quota của Creator được hoàn trả lại (`rollback_daily_quota`), và tệp âm thanh hoàn tất được lưu vào vùng đệm cách ly: `storage/audio_cache/unbilled_{cache_key}.wav`.
+- **Cơ chế Claim & Thăng hạng (Promote):**
+  - Khi client retry hoặc một Waiter trong hàng đợi cần kết quả: Gateway kiểm tra vùng unbilled cache.
+  - Nếu tìm thấy tệp hợp lệ (> 44 bytes), hệ thống kiểm tra và trừ quota ký tự của client claim, thăng hạng tệp thành cache chính thức `{cache_key}.wav` (atomic rename), và trả về phản hồi với header `X-Cache-Status: HIT-CLAIMED`.
+  - Tệp unbilled hỏng (<= 44 bytes) sẽ được tự động xóa bỏ dọn dẹp.
+
+### 5.3 Đồng Bộ Hóa Thời Gian Chờ Toàn Tuyến (120s Timeout Alignment)
+- Nhằm hỗ trợ trơn tru văn bản dài lên đến 2,000 ký tự (có thể mất 30–60 giây suy luận trên GPU tải cao):
+  - **Android OkHttpClient:** Cấu hình `readTimeout(120, TimeUnit.SECONDS)`.
+  - **Gateway Dispatcher:** Cấu hình HTTP client timeout tới worker `timeout=120.0s`.
+  - **Concurrency Limiter:** Cấu hình hàng đợi chờ slot `timeout_sec=120.0s`.
+  - Sự đồng bộ này loại bỏ triệt để hiện tượng client bị ngắt kết nối (`SocketTimeoutException`) trước khi server hoàn thành xử lý âm thanh.
+
+---
+
+## 6. Hướng Dẫn Khởi Chạy
 
 ### Chạy bằng Docker Compose:
 ```bash
@@ -101,13 +128,13 @@ python main.py
 
 ---
 
-## 6. Kiểm Thử Hệ Thống
+## 7. Kiểm Thử Hệ Thống
 
 Chạy bộ kiểm thử tự động pytest:
 ```bash
 pytest tests/ -v
 ```
-Toàn bộ 47 test cases kiểm tra capability load balancing, dynamic voice discovery, auth lifecycle, token blacklist, hot-reload settings on disk change, strict 3-tier client key verification across all endpoints, mandatory user auth on speech/preview/clone, audio cache hit/miss, speech & preview character limits, upfront remaining quota enforcement, user management (slots & real-time TTS chars) và dashboard delivery.
+Toàn bộ 75 test cases kiểm tra capability load balancing, dynamic voice discovery, auth lifecycle, token blacklist, hot-reload settings on disk change, strict 3-tier client key verification across all endpoints, mandatory user auth on speech/preview/clone, audio cache hit/miss, speech & preview character limits, upfront remaining quota enforcement, user management (slots & real-time TTS chars) và dashboard delivery.
 
 ### Kích Hoạt Git Pre-Push Hook Cục Bộ:
 Để git tự động chạy toàn bộ test và ngăn chặn lệnh push nếu có lỗi:

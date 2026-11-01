@@ -96,13 +96,35 @@
 
 ---
 
-## 3. Kiến Trúc Bộ Nhớ Đệm Âm Thanh (Audio Caching Architecture)
+## 3. Kiến Trúc Bộ Nhớ Đệm Âm Thanh, In-Flight Deduplication & Timeout 120s
+
+### 3.1 Bộ Nhớ Đệm Âm Thanh Chuẩn (Standard Audio Cache)
 - **Tạo Cache Key Tất Định (`cache_service.get_cache_key`)**:
   - Key được mã hóa bằng SHA-256: `sha256(voice_id + ":" + text.strip() + ":" + smart_pause + ":48000hz")`.
   - Không bao gồm tốc độ (speed) và cao độ (pitch) vì các thông số này được điều khiển thời gian thực phía trình phát client cho độ trễ bằng 0.
 - **Quy trình Xử Lý Cache:**
   - **Cache HIT:** Trả về file WAV đã cache trực tiếp từ disk trong **< 10ms**, trả kèm headers `X-Cache-Status: HIT`, `X-Sample-Rate: 48000`, `X-Model-Worker: cache`. Hoàn toàn không gọi sang AI worker và miễn trừ tính quota ký tự cho người dùng.
   - **Cache MISS:** Trừ quota ký tự, chuyển tiếp tới worker phù hợp, sau đó lưu nguyên tử (atomic write qua temp file) vào `storage/audio_cache/{key}.wav` và trả về `X-Cache-Status: MISS`.
+
+### 3.2 Vòng Đời Unbilled Audio Cache (Quarantine & Claim)
+- Khi client ngắt kết nối (disconnect/timeout) trong khi worker inference đang xử lý, tiến trình được bảo vệ bằng `asyncio.shield`.
+- Quota tạm trừ của Creator được hoàn lại qua `rollback_daily_quota`.
+- Audio kết xuất được lưu vào `storage/audio_cache/unbilled_{key}.wav` (Unbilled Quarantine Cache).
+- Khi request retry hoặc Waiter đến: Gateway kiểm tra vùng unbilled, kiểm tra và trừ quota ký tự của client, thăng hạng nguyên tử (atomic promote) sang `{key}.wav`, và trả về `X-Cache-Status: HIT-CLAIMED`.
+- Các file hỏng (dung lượng <= 44 bytes - chỉ có WAV header rỗng) được tự động phát hiện và dọn dẹp sạch sẽ.
+
+### 3.3 Cơ Chế In-Flight SingleFlight Deduplication (`InFlightManager`)
+- Coalesce các request đồng thời có cùng `cache_key` thành duy nhất 1 tác vụ inference tới AI worker.
+- **Creator:** Request đầu tiên tạo `InFlightTask`, trừ quota và giữ slot `UserConcurrencyLimiter`.
+- **Waiters:** Các request đến sau chờ trên `asyncio.Future` dùng chung, không chiếm slot concurrency và không tải thêm lên worker.
+- Hỗ trợ đánh thức thread-safe qua `loop.call_soon_threadsafe(event.set)` khi client chạy trên các event loops khác nhau.
+- Bọc logic claim trong `claim_lock`: Nếu Creator hoàn tất và đã thanh toán, Waiters nhận `HIT` (miễn phí quota); nếu Creator ngắt kết nối trước khi thanh toán, Waiter đầu tiên sẽ thanh toán quota và claim kết quả (`HIT-CLAIMED`).
+
+### 3.4 Đồng Bộ Timeout 120s Toàn Tuyến
+- Client Android OkHttpClient (`readTimeout=120s`).
+- Gateway ModelDispatcher HTTP client (`timeout=120.0s`).
+- Gateway UserConcurrencyLimiter queue timeout (`timeout_sec=120.0s`).
+- Đảm bảo xử lý liền mạch các đoạn văn bản dài lên đến 2,000 ký tự mà không bị SocketTimeoutException ngắt quãng.
 
 ---
 
@@ -126,36 +148,36 @@
 ---
 
 ## 5. Kết Quả Kiểm Thử (Verification Suite)
-Toàn bộ **59/59 test cases** trong `VoiceClonerAppServer/tests/` đã được chạy và vượt qua 100%:
-- `test_exceptions_and_security.py`:
-  - `test_register_invalid_email_and_short_password`: Xác thực email sai chuẩn và mật khẩu < 6 ký tự bị từ chối với 422.
-  - `test_login_wrong_credentials`: Đăng nhập sai mật khẩu hoặc tài khoản không tồn tại bị từ chối 401.
-  - `test_tampered_jwt_token_rejected`: Token JWT giả mạo hoặc sai chữ ký bị từ chối 401.
-  - `test_blacklisted_token_rejected_after_logout`: Token sau khi đăng xuất được đưa vào danh sách đen (Redis/InMemory blacklist) và bị từ chối 401.
-  - `test_idor_protection_between_users`: User B tuyệt đối không thể đọc thông tin, tải file audio, sửa, xóa hoặc dùng giọng clone của User A (toàn bộ trả về 404 để chống dò quét IDOR).
-  - `test_modify_or_delete_builtin_voice_rejected`: Cấm sửa hoặc xóa giọng đọc có sẵn 400.
-  - `test_cloned_slots_quota_exhaustion_and_release`: Kiểm soát chặt chẽ hạn mức 3/3 slot clone, vượt quá nhận 403, xóa giọng cũ giải phóng slot.
-  - `test_quota_rollback_on_worker_synthesis_failure`: Khi downstream worker gặp sự cố, hệ thống trả về 503 và hoàn lại 100% số ký tự đã trừ tạm thời.
-  - `test_clone_voice_empty_file_rejected`: Tải file audio rỗng bị từ chối 400.
-  - `test_management_unauthorized_access`: Truy cập quản trị không có key hoặc sai key bị từ chối 401, xóa user không tồn tại trả về 404.
+Toàn bộ **75/75 test cases** trong `VoiceClonerAppServer/tests/` đã được chạy và vượt qua 100%:
+- `test_inflight_manager.py`:
+  - `test_inflight_manager_coalesces_duplicate_keys`: Coalesce các request đồng thời, chia sẻ task chung.
+  - `test_inflight_manager_propagates_error`: Lan truyền lỗi từ worker đến tất cả các waiter.
+  - `test_inflight_task_attributes_and_defaults`: Khởi tạo đúng các thuộc tính task, cờ thanh toán và khóa claim.
+  - `test_singleton_inflight_manager`: Đảm bảo pattern Singleton duy nhất trong toàn hệ thống.
+- `test_inflight_speech_e2e.py`:
+  - `test_inflight_deduplication_single_worker_dispatch`: 2 request đồng thời chỉ kích hoạt 1 lần gọi worker duy nhất; request 1 nhận MISS, request 2 nhận HIT.
+  - `test_unbilled_cache_claim_on_retry_deducts_quota`: Client retry nhận file unbilled cache đã hoàn tất, trừ đúng quota và thăng hạng cache.
+  - `test_unbilled_cache_insufficient_quota_leaves_file_intact`: Client không đủ quota nhận 403 và file unbilled vẫn được giữ nguyên vẹn.
+  - `test_cloned_voice_idor_rejected_before_cache_or_inflight`: Kiểm tra IDOR sở hữu giọng clone trước mọi truy vấn cache hay singleflight.
+  - `test_worker_failure_rolls_back_quota_and_clears_inflight`: Worker lỗi hoàn lại 100% quota và dọn sạch trạng thái in-flight.
 - `test_audio_cache.py`:
-  - `test_audio_cache_hit_and_miss_flow`: Xác nhận lần gọi thứ nhất là `MISS` (tính quota, ghi cache), lần gọi thứ hai cùng câu thoại là `HIT` (trả về tức thì < 50ms, không gọi worker, không trừ quota).
-  - `test_preview_audio_cache_flow`: Xác nhận nghe thử mẫu giọng cũng áp dụng cache tăng tốc.
-- `test_capability_load_balancing.py`:
-  - `test_capability_routing_matches_supported_voice`: Khẳng định request voice A chỉ đến worker hỗ trợ voice A, request voice C chỉ đến worker hỗ trợ voice C.
-  - `test_capability_routing_least_active_among_shared_voice`: Khẳng định với voice dùng chung giữa nhiều worker, thuật toán chọn đúng worker ít việc nhất.
-  - `test_capability_routing_for_cloning`: Khẳng định các tác vụ clone chỉ điều phối tới worker có năng lực clone.
-- `test_dynamic_voice_discovery.py`:
-  - Khẳng định khả năng tự động truy vấn và tổng hợp danh mục giọng từ nhiều worker bất kỳ, tự động loại bỏ trùng lặp ID.
-- `test_auth_and_voices_e2e.py`:
-  - Vòng đời tài khoản người dùng, token refresh, clone voice lưu DB và tổng hợp âm thanh.
-- `test_settings_and_3tier_auth.py`:
-  - Quản lý cấu hình 3-tier, cập nhật runtime, từ chối client key sai/vô hiệu hóa, tự động hot-reload khi file `settings.json` bị chỉnh sửa trực tiếp trên đĩa (disk mtime check).
-- `test_management_users_and_pna.py`:
-  - Private Network Access headers, luồng quản lý người dùng, hiển thị chính xác số slot clone đã dùng / tối đa và số ký tự TTS hôm nay.
-- `test_dashboard_ui.py`, `test_docker_packaging.py`.
-
----
+  - `test_audio_cache_hit_and_miss_flow`: Lần 1 MISS (tính quota, ghi cache), lần 2 HIT (< 10ms, miễn trừ quota).
+  - `test_preview_audio_cache_flow`: Nghe thử mẫu giọng áp dụng cache tăng tốc.
+  - `test_unbilled_cache_save_retrieve_and_promote`: Lưu trữ, truy xuất và thăng hạng unbilled cache nguyên tử.
+  - `test_unbilled_cache_corrupt_file_cleanup`: Tự động xóa file unbilled hỏng <= 44 bytes.
+  - `test_unbilled_cache_promote_when_dest_already_exists`: Xử lý an toàn khi file đích chuẩn đã tồn tại.
+- `test_concurrency_limiter.py`:
+  - `test_concurrency_limiter_allows_under_limit`, `test_concurrency_limiter_queues_and_rejects_overflow`, `test_concurrency_limiter_releases_on_error`.
+  - `test_gateway_timeout_defaults_are_120_seconds`: Kiểm tra thời gian chờ mặc định của Gateway và Worker client đều là 120 giây.
+- `test_exceptions_and_security.py` (14 tests bảo mật IDOR, JWT, quotas, rollback).
+- `test_capability_load_balancing.py` (3 tests định tuyến năng lực giọng và clone).
+- `test_dynamic_voice_discovery.py` (khám phá danh mục giọng từ nhiều worker).
+- `test_auth_and_voices_e2e.py` (5 tests vòng đời người dùng, auth me, Android contract).
+- `test_settings_and_3tier_auth.py` (12 tests cấu hình 3-tier, hot reload, per-user limits).
+- `test_management_users_and_pna.py` (5 tests quản trị tài khoản, PNA headers).
+- `test_management_workers.py` (2 tests quản trị worker, cache purge).
+- `test_speech_per_user_limits.py` (4 tests hạn mức per-user trên speech và preview).
+- `test_dashboard_ui.py`, `test_dashboard_metrics_extension.py`, `test_database_migration.py`, `test_docker_packaging.py`.
 
 ## 5. Phase 16: Tự Động Hot-Reload File Cấu Hình & Siết Chặt Xác Thực 3-Tier Client API Key Cho Toàn Bộ Gateway
 - **Tự động hot-reload cấu hình đĩa (`settings.json`)**: `SettingsManager` theo dõi `st_mtime` của `config/settings.json`, tự động nạp lại cấu hình và kích hoạt change hooks ngay khi phát hiện chỉnh sửa từ editor mà không cần restart server.

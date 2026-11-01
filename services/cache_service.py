@@ -57,6 +57,57 @@ class CacheService:
             logger.warning(f"Could not persist audio cache {p.name}: {e}")
             raise
 
+    def get_unbilled_cached_file(self, cache_key: str) -> Optional[Path]:
+        p = self.cache_dir / f"unbilled_{cache_key}.wav"
+        if p.exists() and p.is_file():
+            if p.stat().st_size <= 44:
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception as e:
+                    logger.warning(f"Could not delete corrupt unbilled cache {p.name}: {e}")
+                return None
+            return p
+        return None
+
+    def save_unbilled_cache(self, cache_key: str, wav_bytes: bytes) -> Path:
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        p = self.cache_dir / f"unbilled_{cache_key}.wav"
+        temp_p = self.cache_dir / f"unbilled_{cache_key}.tmp_{id(wav_bytes)}"
+        try:
+            temp_p.write_bytes(wav_bytes)
+            temp_p.replace(p)
+            logger.info(f"Saved unbilled audio cache: {p.name} ({len(wav_bytes)} bytes @ 48kHz)")
+            return p
+        except Exception as e:
+            if temp_p.exists():
+                try:
+                    temp_p.unlink()
+                except Exception:
+                    pass
+            logger.warning(f"Could not persist unbilled audio cache {p.name}: {e}")
+            raise
+
+    def promote_unbilled_cache(self, cache_key: str) -> Optional[Path]:
+        unbilled_p = self.cache_dir / f"unbilled_{cache_key}.wav"
+        dest_p = self.cache_dir / f"{cache_key}.wav"
+        if not unbilled_p.exists():
+            if dest_p.exists() and dest_p.stat().st_size > 44:
+                return dest_p
+            return None
+
+        try:
+            if dest_p.exists():
+                unbilled_p.unlink(missing_ok=True)
+                return dest_p
+            unbilled_p.replace(dest_p)
+            logger.info(f"Promoted unbilled audio cache {unbilled_p.name} -> {dest_p.name}")
+            return dest_p
+        except Exception as e:
+            logger.warning(f"Could not promote unbilled cache {cache_key}: {e}")
+            if dest_p.exists():
+                return dest_p
+            raise
+
 
     def purge_cache(self) -> int:
         """Purge all cached audio WAV files and return the number of deleted files."""

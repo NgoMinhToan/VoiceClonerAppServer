@@ -36,6 +36,12 @@
 
 ## 3. Completed Work
 
+### Upstream Worker & Concurrency Queue Timeout Alignment (Nov 2026)
+- **120s Timeout Synchronization**:
+  - Aligned upstream worker HTTP read timeout in `services/model_dispatcher.py` (`_get_http_client()`) from 60.0s to 120.0s.
+  - Aligned user concurrency waiting queue timeout in `services/concurrency_limiter.py` (`acquire(..., timeout_sec=120.0)`) from 60.0s to 120.0s.
+  - Added unit test `test_gateway_timeout_defaults_are_120_seconds` in `tests/test_concurrency_limiter.py` verifying both default timeouts are 120.0s, matching the Android client socket timeout for long audio synthesis.
+
 ### Exposure of Full Per-User Quotas & Limits in Client Auth APIs (Oct 2026)
 - **Profile & Auth Responses Synchronization**:
   - Extended `UserProfileResponse` (`GET /v1/auth/me`) and `UserResponse` (`POST /v1/auth/register`, `/login`, `/google`) in `models/schemas.py` to return all user-specific quotas and limits:
