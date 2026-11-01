@@ -34,6 +34,11 @@ class UserConcurrencyLimiter:
         timeout_sec: float = 120.0,
     ):
         event: Optional[asyncio.Event] = None
+        try:
+            curr_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            curr_loop = None
+
         async with self._lock:
             active = self._active.get(user_id, 0)
             waiters = self._waiters.setdefault(user_id, [])
@@ -42,7 +47,7 @@ class UserConcurrencyLimiter:
                 self._active[user_id] = active + 1
             elif len(waiters) < max_waiters:
                 event = asyncio.Event()
-                waiters.append(event)
+                waiters.append((event, curr_loop))
             else:
                 logger.warning(
                     f"⛔ [CONCURRENCY REJECTED] user='{user_id}' exceeded queue depth ({len(waiters)}/{max_waiters}) with {active}/{max_concurrent} active jobs"
@@ -58,13 +63,17 @@ class UserConcurrencyLimiter:
             except asyncio.TimeoutError:
                 async with self._lock:
                     waiters = self._waiters.get(user_id, [])
-                    if event in waiters:
-                        waiters.remove(event)
+                    waiter_entry = next((w for w in waiters if w[0] is event), None)
+                    if waiter_entry:
+                        waiters.remove(waiter_entry)
                     else:
                         # Event was set just before timeout: transfer token to next waiter or decrement
                         if waiters:
-                            next_ev = waiters.pop(0)
-                            next_ev.set()
+                            next_ev, next_loop = waiters.pop(0)
+                            if next_loop and next_loop.is_running() and next_loop != asyncio.get_running_loop():
+                                next_loop.call_soon_threadsafe(next_ev.set)
+                            else:
+                                next_ev.set()
                         else:
                             self._active[user_id] = max(0, self._active.get(user_id, 1) - 1)
                 raise HTTPException(
@@ -78,8 +87,11 @@ class UserConcurrencyLimiter:
             async with self._lock:
                 waiters = self._waiters.get(user_id, [])
                 if waiters:
-                    next_event = waiters.pop(0)
-                    next_event.set()
+                    next_event, ev_loop = waiters.pop(0)
+                    if ev_loop and ev_loop.is_running() and ev_loop != asyncio.get_running_loop():
+                        ev_loop.call_soon_threadsafe(next_event.set)
+                    else:
+                        next_event.set()
                 else:
                     self._active[user_id] = max(0, self._active.get(user_id, 1) - 1)
                     if self._active.get(user_id, 0) == 0:

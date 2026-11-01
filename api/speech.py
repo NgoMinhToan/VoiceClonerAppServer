@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import time
@@ -22,6 +23,7 @@ from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice, utc_n
 from VoiceClonerAppServer.models.schemas import PreviewSpeechRequest, SynthesisRequest
 from VoiceClonerAppServer.services.cache_service import cache_service
 from VoiceClonerAppServer.services.concurrency_limiter import user_concurrency_limiter
+from VoiceClonerAppServer.services.inflight_manager import inflight_manager
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 from VoiceClonerAppServer.services.usage_tracker import usage_tracker
 from VoiceClonerAppServer.services.voice_service import CLONED_VOICES_DIR, voice_service
@@ -29,6 +31,59 @@ from VoiceClonerAppServer.services.voice_service import CLONED_VOICES_DIR, voice
 logger = logging.getLogger("VoiceClonerAppServer.SpeechAPI")
 
 router = APIRouter(tags=["Speech"])
+
+
+def _build_audio_response(
+    audio_bytes: bytes,
+    response_format: str,
+    duration_ms: float,
+    cache_status: str,
+    worker_id: str,
+) -> Response:
+    if response_format == "pcm":
+        media_type = "audio/pcm"
+        content = audio_bytes[44:] if len(audio_bytes) > 44 and audio_bytes.startswith(b"RIFF") else audio_bytes
+    elif response_format == "wav":
+        media_type = "audio/wav"
+        content = audio_bytes
+    else:
+        media_type = f"audio/{response_format}"
+        content = audio_bytes
+
+    headers = {
+        "Content-Type": media_type,
+        "X-Sample-Rate": "48000",
+        "X-Execution-Time-Ms": f"{duration_ms:.2f}",
+        "X-Cache-Status": cache_status,
+        "X-Model-Worker": worker_id,
+    }
+    return Response(content=content, media_type=media_type, headers=headers)
+
+
+async def _commit_daily_usage(db: AsyncSession, user_id: str, char_count: int) -> None:
+    try:
+        today = datetime.now(timezone.utc).date()
+        usage_stmt = select(DailyUsage).where(
+            DailyUsage.user_id == user_id,
+            DailyUsage.usage_date == today,
+        )
+        usage_res = await db.execute(usage_stmt)
+        daily_usage_record = usage_res.scalar_one_or_none()
+        if daily_usage_record:
+            daily_usage_record.tts_characters_used += char_count
+            daily_usage_record.updated_at = utc_now()
+        else:
+            daily_usage_record = DailyUsage(
+                user_id=user_id,
+                usage_date=today,
+                tts_characters_used=char_count,
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+            db.add(daily_usage_record)
+        await db.commit()
+    except Exception as ue:
+        logger.warning(f"Could not persist DailyUsage record: {ue}")
 
 
 @router.post("/v1/audio/speech")
@@ -43,7 +98,7 @@ async def create_speech(
     OpenAI-compatible text-to-speech synthesis endpoint.
     Supports User Bearer JWT authentication (with user daily quota)
     and/or Client API Key (with client quota tracking).
-    Standard 48kHz WAV audio output.
+    Standard 48kHz WAV audio output with in-flight deduplication and unbilled cache.
     """
     # 1. Validate authentication credentials
     client_key: Optional[ClientApiKeyConfig] = None
@@ -93,23 +148,33 @@ async def create_speech(
             detail=f"Văn bản cần tổng hợp vượt quá giới hạn tối đa cho phép ({char_count}/{max_speech_limit} ký tự).",
         )
 
-    # 4. Check remaining daily quota
-    current_used = await get_daily_usage(current_user.id)
-    remaining_chars = max(0, daily_limit - current_used)
-    if char_count > remaining_chars:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
-        )
-
-    # 5. Check rate limit
+    # Check rate limit
     if not await check_rate_limit(current_user.id, max_requests=user_rate_limit):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.",
         )
 
-    # 6. Check Audio Cache (deterministic SHA-256 excluding speed/pitch for player-side tuning)
+    # Step 0: Resolve voice and cloned embeddings & IDOR check (before cache or in-flight lookups)
+    ref_npz_base64 = request.ref_npz_base64
+    ref_audio_path = request.ref_audio_path
+
+    stmt = select(Voice).where(Voice.id == voice_name)
+    res = await db.execute(stmt)
+    db_voice = res.scalar_one_or_none()
+
+    if db_voice and not db_voice.is_builtin:
+        if db_voice.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy giọng nói.")
+
+        # Load precomputed .npz embedding if present
+        npz_file = CLONED_VOICES_DIR / f"{db_voice.id}.npz"
+        if npz_file.exists():
+            ref_npz_base64 = base64.b64encode(npz_file.read_bytes()).decode("utf-8")
+        elif db_voice.ref_audio_path:
+            ref_audio_path = db_voice.ref_audio_path
+
+    # Step 1: Standard Audio Cache Check (deterministic SHA-256 excluding speed/pitch for player-side tuning)
     cache_key = cache_service.get_cache_key(
         voice_id=voice_name,
         text=input_text,
@@ -138,79 +203,180 @@ async def create_speech(
             status_code=200,
         )
 
-        if response_format == "pcm":
-            pcm_data = wav_bytes[44:] if len(wav_bytes) > 44 else wav_bytes
-            headers = {
-                "Content-Type": "audio/pcm",
-                "X-Sample-Rate": "48000",
-                "X-Execution-Time-Ms": f"{duration_ms:.2f}",
-                "X-Cache-Status": "HIT",
-                "X-Model-Worker": "cache",
-            }
-            return Response(content=pcm_data, media_type="audio/pcm", headers=headers)
-        else:
-            headers = {
-                "Content-Type": "audio/wav",
-                "X-Sample-Rate": "48000",
-                "X-Execution-Time-Ms": f"{duration_ms:.2f}",
-                "X-Cache-Status": "HIT",
-                "X-Model-Worker": "cache",
-            }
-            return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
+        return _build_audio_response(wav_bytes, response_format, duration_ms, cache_status="HIT", worker_id="cache")
 
-    logger.info(f"🔄 [AUDIO CACHE MISS] voice='{voice_name}', text_len={char_count} -> Checking quota and dispatching to worker...")
+    # Step 2: Unbilled Audio Cache Check (orphaned audio from previous disconnected synthesis)
+    unbilled_file = cache_service.get_unbilled_cached_file(cache_key)
+    if unbilled_file and response_format in ("wav", "pcm"):
+        t_claim = time.perf_counter()
+        current_used = await get_daily_usage(current_user.id)
+        remaining_chars = max(0, daily_limit - current_used)
+        if char_count > remaining_chars or not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
+            )
 
-    # 7. Deduct daily quota atomically (Cache MISS path)
-    if not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Bạn đã sử dụng hết hạn mức {daily_limit:,} ký tự hôm nay. Hạn mức sẽ được làm mới vào 00:00.",
+        promoted_path = cache_service.promote_unbilled_cache(cache_key)
+        target_path = promoted_path if promoted_path and promoted_path.exists() else unbilled_file
+        wav_bytes = target_path.read_bytes()
+        duration_ms = (time.perf_counter() - t_claim) * 1000.0
+
+        await _commit_daily_usage(db, current_user.id, char_count)
+
+        await usage_tracker.log_usage(
+            client_key_id=client_id,
+            client_key_name=client_name,
+            endpoint="/v1/audio/speech",
+            model_worker_id="unbilled-cache-claimed",
+            char_count=char_count,
+            latency_ms=duration_ms,
+            status_code=200,
         )
 
-    # 5. Resolve voice and cloned embeddings
-    ref_npz_base64 = request.ref_npz_base64
-    ref_audio_path = request.ref_audio_path
+        logger.info(
+            f"🏷️ [UNBILLED CACHE CLAIMED] voice='{voice_name}', text_len={char_count} -> Promoted to standard cache "
+            f"and billed {char_count} characters to user '{current_user.email}'"
+        )
 
-    # Check if voice_name refers to a database cloned voice
-    stmt = select(Voice).where(Voice.id == voice_name)
-    res = await db.execute(stmt)
-    db_voice = res.scalar_one_or_none()
+        return _build_audio_response(wav_bytes, response_format, duration_ms, cache_status="HIT-CLAIMED", worker_id="cache")
 
-    if db_voice and not db_voice.is_builtin:
-        if db_voice.user_id != current_user.id:
-            await rollback_daily_quota(current_user.id, char_count)
-            raise HTTPException(status_code=404, detail="Không tìm thấy giọng nói.")
+    # Step 3: In-Flight Deduplication (SingleFlight pattern)
+    logger.info(f"🔄 [AUDIO CACHE MISS] voice='{voice_name}', text_len={char_count} -> In-flight coordination...")
 
-        # Load precomputed .npz embedding if present
-        npz_file = CLONED_VOICES_DIR / f"{db_voice.id}.npz"
-        if npz_file.exists():
-            ref_npz_base64 = base64.b64encode(npz_file.read_bytes()).decode("utf-8")
-        elif db_voice.ref_audio_path:
-            ref_audio_path = db_voice.ref_audio_path
+    task, is_creator = await inflight_manager.get_or_create(cache_key, current_user.id, char_count)
+
+    if not is_creator:
+        t_waiter = time.perf_counter()
+        logger.info(f"⏳ [IN-FLIGHT WAITER] Joined active TTS job for key {cache_key[:12]}... (user='{current_user.email}')")
+        try:
+            audio_bytes, exec_sec, worker_id = await task.future
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"In-flight task failed for waiter: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Dịch vụ tổng hợp âm thanh tạm thời không khả dụng, vui lòng thử lại sau.",
+            )
+
+        duration_ms = (time.perf_counter() - t_waiter) * 1000.0
+
+        async with task.claim_lock:
+            if task.initiator_paid or task.is_billed:
+                logger.info(
+                    f"⚡ [IN-FLIGHT CACHE HIT] voice='{voice_name}', text_len={char_count} -> Served as HIT from completed in-flight job"
+                )
+                await usage_tracker.log_usage(
+                    client_key_id=client_id,
+                    client_key_name=client_name,
+                    endpoint="/v1/audio/speech",
+                    model_worker_id="cache-hit",
+                    char_count=char_count,
+                    latency_ms=duration_ms,
+                    status_code=200,
+                )
+                return _build_audio_response(audio_bytes, response_format, duration_ms, cache_status="HIT", worker_id="cache")
+            else:
+                # Initiator disconnected and not yet billed
+                current_used = await get_daily_usage(current_user.id)
+                remaining_chars = max(0, daily_limit - current_used)
+                if char_count > remaining_chars or not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
+                    )
+
+                promoted = cache_service.promote_unbilled_cache(cache_key)
+                if not promoted and response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
+                    try:
+                        cache_service.save_cache(cache_key, audio_bytes)
+                    except Exception as ce:
+                        logger.warning(f"Could not persist cache during waiter claim: {ce}")
+                task.is_billed = True
+
+                await _commit_daily_usage(db, current_user.id, char_count)
+
+                await usage_tracker.log_usage(
+                    client_key_id=client_id,
+                    client_key_name=client_name,
+                    endpoint="/v1/audio/speech",
+                    model_worker_id="unbilled-cache-claimed",
+                    char_count=char_count,
+                    latency_ms=duration_ms,
+                    status_code=200,
+                )
+
+                logger.info(
+                    f"🏷️ [IN-FLIGHT UNBILLED CLAIMED] voice='{voice_name}', text_len={char_count} -> Billed {char_count} chars to waiter '{current_user.email}'"
+                )
+
+                return _build_audio_response(audio_bytes, response_format, duration_ms, cache_status="HIT-CLAIMED", worker_id="cache")
+
+    # Creator path: Deduct daily quota upfront for creator
+    current_used = await get_daily_usage(current_user.id)
+    remaining_chars = max(0, daily_limit - current_used)
+    if char_count > remaining_chars or not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
+        await inflight_manager.remove(cache_key)
+        exc = HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
+        )
+        task.future.set_exception(exc)
+        try:
+            _ = task.future.exception()
+        except Exception:
+            pass
+        raise exc
 
     t0 = time.perf_counter()
     try:
-        async with user_concurrency_limiter.acquire(
-            current_user.id,
-            max_concurrent=user_concurrent,
-            max_waiters=user_queue,
-        ):
-            audio_bytes, exec_sec, worker_id = await model_dispatcher.synthesize(
-                text=input_text,
-                voice=voice_name,
-                speed=request.speed,
-                pitch=request.pitch,
-                emotion=request.emotion_level if request.emotion_level is not None else request.emotion,
-                denoise=request.denoise,
-                smart_pause=request.smart_pause,
-                response_format=response_format,
-                ref_audio_path=ref_audio_path,
-                ref_npz_base64=ref_npz_base64,
-            )
+        async def _execute_synthesis():
+            async with user_concurrency_limiter.acquire(
+                current_user.id,
+                max_concurrent=user_concurrent,
+                max_waiters=user_queue,
+            ):
+                return await model_dispatcher.synthesize(
+                    text=input_text,
+                    voice=voice_name,
+                    speed=request.speed,
+                    pitch=request.pitch,
+                    emotion=request.emotion_level if request.emotion_level is not None else request.emotion,
+                    denoise=request.denoise,
+                    smart_pause=request.smart_pause,
+                    response_format=response_format,
+                    ref_audio_path=ref_audio_path,
+                    ref_npz_base64=ref_npz_base64,
+                )
+
+        synth_task = asyncio.create_task(_execute_synthesis())
+
+        client_disconnected = False
+        try:
+            audio_bytes, exec_sec, worker_id = await asyncio.shield(synth_task)
+        except asyncio.CancelledError:
+            client_disconnected = True
+            audio_bytes, exec_sec, worker_id = await asyncio.shield(synth_task)
 
         duration_ms = (time.perf_counter() - t0) * 1000.0
 
-        # Persist synthesized WAV to audio cache
+        is_disconnected = client_disconnected or (await req_raw.is_disconnected())
+        if is_disconnected:
+            logger.info(f"🔌 [CLIENT DISCONNECTED] Creator disconnected; saving unbilled cache for key {cache_key[:12]}...")
+            await rollback_daily_quota(current_user.id, char_count)
+            if response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
+                try:
+                    cache_service.save_unbilled_cache(cache_key, audio_bytes)
+                except Exception as ce:
+                    logger.warning(f"Could not persist unbilled audio cache: {ce}")
+            if not task.future.done():
+                task.future.set_result((audio_bytes, exec_sec, worker_id))
+            if client_disconnected:
+                raise asyncio.CancelledError()
+            return Response(status_code=499)
+
+        # Client is online and receives audio:
         if response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
             try:
                 cache_service.save_cache(cache_key, audio_bytes)
@@ -218,7 +384,13 @@ async def create_speech(
             except Exception as ce:
                 logger.warning(f"Could not persist audio cache: {ce}")
 
-        # Asynchronous usage logging
+        task.initiator_paid = True
+
+        await _commit_daily_usage(db, current_user.id, char_count)
+
+        if not task.future.done():
+            task.future.set_result((audio_bytes, exec_sec, worker_id))
+
         await usage_tracker.log_usage(
             client_key_id=client_id,
             client_key_name=client_name,
@@ -229,53 +401,42 @@ async def create_speech(
             status_code=200,
         )
 
-        # Persist DailyUsage for user in SQL database
-        try:
-            today = datetime.now(timezone.utc).date()
-            usage_stmt = select(DailyUsage).where(
-                DailyUsage.user_id == current_user.id,
-                DailyUsage.usage_date == today,
-            )
-            usage_res = await db.execute(usage_stmt)
-            daily_usage_record = usage_res.scalar_one_or_none()
-            if daily_usage_record:
-                daily_usage_record.tts_characters_used += char_count
-                daily_usage_record.updated_at = utc_now()
-            else:
-                daily_usage_record = DailyUsage(
-                    user_id=current_user.id,
-                    usage_date=today,
-                    tts_characters_used=char_count,
-                    created_at=utc_now(),
-                    updated_at=utc_now(),
-                )
-                db.add(daily_usage_record)
-            await db.commit()
-        except Exception as ue:
-            logger.warning(f"Could not persist DailyUsage record: {ue}")
-
         logger.info(f"✅ [TTS COMPLETED] via worker '{worker_id}' in {duration_ms:.2f}ms: received {len(audio_bytes):,} bytes @ 48kHz")
 
-        media_type = "audio/pcm" if response_format == "pcm" else "audio/wav"
-        headers = {
-            "Content-Type": media_type,
-            "X-Sample-Rate": "48000",
-            "X-Execution-Time-Ms": f"{duration_ms:.2f}",
-            "X-Cache-Status": "MISS",
-            "X-Model-Worker": worker_id,
-        }
-        return Response(content=audio_bytes, media_type=media_type, headers=headers)
+        return _build_audio_response(audio_bytes, response_format, duration_ms, cache_status="MISS", worker_id=worker_id)
+
     except HTTPException:
         await rollback_daily_quota(current_user.id, char_count)
+        if not task.future.done():
+            task.future.set_exception(
+                HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Dịch vụ tổng hợp âm thanh tạm thời không khả dụng, vui lòng thử lại sau.",
+                )
+            )
+            try:
+                _ = task.future.exception()
+            except Exception:
+                pass
+        raise
+    except asyncio.CancelledError:
         raise
     except Exception as e:
         await rollback_daily_quota(current_user.id, char_count)
+        if not task.future.done():
+            task.future.set_exception(e)
+            try:
+                _ = task.future.exception()
+            except Exception:
+                pass
         duration_ms = (time.perf_counter() - t0) * 1000.0
         logger.error(f"Speech synthesis failure: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Dịch vụ tổng hợp âm thanh tạm thời không khả dụng, vui lòng thử lại sau.",
         )
+    finally:
+        await inflight_manager.remove(cache_key)
 
 
 @router.post("/v1/voices/preview")
