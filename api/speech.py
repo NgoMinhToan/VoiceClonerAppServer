@@ -83,6 +83,7 @@ async def _commit_daily_usage(db: AsyncSession, user_id: str, char_count: int) -
             db.add(daily_usage_record)
         await db.commit()
     except Exception as ue:
+        await db.rollback()
         logger.warning(f"Could not persist DailyUsage record: {ue}")
 
 
@@ -217,9 +218,17 @@ async def create_speech(
                 detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
             )
 
-        promoted_path = cache_service.promote_unbilled_cache(cache_key)
-        target_path = promoted_path if promoted_path and promoted_path.exists() else unbilled_file
-        wav_bytes = target_path.read_bytes()
+        try:
+            promoted_path = cache_service.promote_unbilled_cache(cache_key)
+            target_path = promoted_path if promoted_path and promoted_path.exists() else unbilled_file
+            wav_bytes = target_path.read_bytes()
+        except Exception as e:
+            logger.error(f"Failed to read/promote unbilled cache file for key {cache_key}: {e}")
+            await rollback_daily_quota(current_user.id, char_count)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Lỗi khi truy xuất tệp âm thanh từ bộ nhớ đệm.",
+            )
         duration_ms = (time.perf_counter() - t_claim) * 1000.0
 
         await _commit_daily_usage(db, current_user.id, char_count)

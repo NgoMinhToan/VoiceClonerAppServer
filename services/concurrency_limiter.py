@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from fastapi import HTTPException, status
 
 logger = logging.getLogger("VoiceClonerAppServer.ConcurrencyLimiter")
@@ -17,7 +17,7 @@ class UserConcurrencyLimiter:
     def __init__(self):
         self._lock = asyncio.Lock()
         self._active: Dict[str, int] = {}
-        self._waiters: Dict[str, List[asyncio.Event]] = {}
+        self._waiters: Dict[str, List[Tuple[asyncio.Event, Optional[asyncio.AbstractEventLoop]]]] = {}
 
     def get_active_count(self, user_id: str) -> int:
         return self._active.get(user_id, 0)
