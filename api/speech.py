@@ -95,6 +95,7 @@ async def create_speech(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_client_timeout: Optional[float] = Header(120.0, alias="X-Client-Timeout"),
 ):
     """
     OpenAI-compatible text-to-speech synthesis endpoint.
@@ -130,6 +131,7 @@ async def create_speech(
     response_format = (request.response_format or request.format or "wav").lower()
     client_name = client_key.name if client_key else current_user.full_name
     client_id = client_key.id if client_key else current_user.id
+    client_timeout_sec = float(x_client_timeout) if (x_client_timeout is not None and x_client_timeout > 0) else 120.0
 
     logger.info(
         f"🎙️ [TTS REQUEST] voice='{voice_name}' | text='{input_text[:50]}...' ({char_count} chars) | "
@@ -340,6 +342,32 @@ async def create_speech(
         raise exc
 
     t0 = time.perf_counter()
+    quota_rolled_back = False
+
+    async def _safe_rollback_quota():
+        nonlocal quota_rolled_back
+        if not quota_rolled_back:
+            quota_rolled_back = True
+            await rollback_daily_quota(current_user.id, char_count)
+
+    client_disconnected = False
+
+    async def _watch_disconnect():
+        nonlocal client_disconnected
+        try:
+            while not client_disconnected:
+                msg = await req_raw.receive()
+                if msg.get("type") == "http.disconnect":
+                    client_disconnected = True
+                    logger.info(f"🔌 [CLIENT DISCONNECTED] Client connection dropped during synthesis for key {cache_key[:12]}...")
+                    with anyio.CancelScope(shield=True):
+                        await _safe_rollback_quota()
+                    break
+        except Exception:
+            pass
+
+    disconnect_watcher = asyncio.create_task(_watch_disconnect())
+
     try:
         async def _execute_synthesis():
             async with user_concurrency_limiter.acquire(
@@ -362,7 +390,6 @@ async def create_speech(
 
         synth_task = asyncio.create_task(_execute_synthesis())
 
-        client_disconnected = False
         try:
             audio_bytes, exec_sec, worker_id = await asyncio.shield(synth_task)
         except asyncio.CancelledError:
@@ -378,11 +405,11 @@ async def create_speech(
                             _ = task.future.exception()
                         except Exception:
                             pass
-                    await rollback_daily_quota(current_user.id, char_count)
+                    await _safe_rollback_quota()
                     raise asyncio.CancelledError()
 
                 logger.info(f"🔌 [CLIENT DISCONNECTED] Creator disconnected; saving unbilled cache for key {cache_key[:12]}...")
-                await rollback_daily_quota(current_user.id, char_count)
+                await _safe_rollback_quota()
                 if response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
                     try:
                         cache_service.save_unbilled_cache(cache_key, audio_bytes)
@@ -392,12 +419,19 @@ async def create_speech(
                     task.future.set_result((audio_bytes, exec_sec, worker_id))
             raise asyncio.CancelledError()
 
-        duration_ms = (time.perf_counter() - t0) * 1000.0
+        duration_sec = time.perf_counter() - t0
+        duration_ms = duration_sec * 1000.0
 
-        if await req_raw.is_disconnected():
-            logger.info(f"🔌 [CLIENT DISCONNECTED] Creator disconnected; saving unbilled cache for key {cache_key[:12]}...")
+        is_client_timed_out = duration_sec >= client_timeout_sec
+        is_abandoned = client_disconnected or is_client_timed_out or (await req_raw.is_disconnected())
+
+        if is_abandoned:
+            logger.info(
+                f"🔌 [CLIENT TIMEOUT/DISCONNECT] duration={duration_sec:.2f}s >= timeout={client_timeout_sec:.2f}s "
+                f"or disconnected={client_disconnected}; saving unbilled cache for key {cache_key[:12]}..."
+            )
             with anyio.CancelScope(shield=True):
-                await rollback_daily_quota(current_user.id, char_count)
+                await _safe_rollback_quota()
                 if response_format == "wav" and audio_bytes and len(audio_bytes) > 44:
                     try:
                         cache_service.save_unbilled_cache(cache_key, audio_bytes)
@@ -437,7 +471,7 @@ async def create_speech(
         return _build_audio_response(audio_bytes, response_format, duration_ms, cache_status="MISS", worker_id=worker_id)
 
     except HTTPException:
-        await rollback_daily_quota(current_user.id, char_count)
+        await _safe_rollback_quota()
         if not task.future.done():
             task.future.set_exception(
                 HTTPException(
@@ -453,7 +487,7 @@ async def create_speech(
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        await rollback_daily_quota(current_user.id, char_count)
+        await _safe_rollback_quota()
         if not task.future.done():
             task.future.set_exception(e)
             try:
@@ -467,6 +501,8 @@ async def create_speech(
             detail="Dịch vụ tổng hợp âm thanh tạm thời không khả dụng, vui lòng thử lại sau.",
         )
     finally:
+        if disconnect_watcher and not disconnect_watcher.done():
+            disconnect_watcher.cancel()
         with anyio.CancelScope(shield=True):
             await inflight_manager.remove(cache_key)
 

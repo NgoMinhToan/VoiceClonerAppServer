@@ -407,3 +407,91 @@ async def test_client_timeout_disconnect_worker_persists_unbilled_and_retry_clai
         # 7. CRUCIAL INVARIANT: Upstream worker was called EXACTLY ONCE!
         assert synth_call_count == 1
 
+
+@pytest.mark.asyncio
+async def test_client_timeout_header_triggers_unbilled_and_rollback(monkeypatch):
+    """
+    Test 7: Client passes X-Client-Timeout: 0.1s. Worker synthesis takes 0.25s.
+    Even without explicit client socket cancellation, Gateway detects duration_sec >= client_timeout_sec,
+    rolls back creator quota, saves unbilled cache, and returns 499.
+    Subsequent retry claims unbilled cache with HIT-CLAIMED and deducts quota.
+    """
+    synth_call_count = 0
+
+    async def mock_slow_synth(**kwargs):
+        nonlocal synth_call_count
+        synth_call_count += 1
+        await asyncio.sleep(0.25)
+        wav_payload = b"RIFF" + (b"\x00" * 40) + b"timedOutAudioDataPayload48kHz" * 2
+        return wav_payload, 0.25, "worker-primary-timeout"
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_slow_synth)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
+        email = f"header_timeout_tester_{uuid.uuid4().hex[:8]}@example.com"
+        reg = await ac.post(
+            "/v1/auth/register",
+            headers=API_KEY_HEADER,
+            json={"email": email, "password": "password123", "full_name": "Header Timeout Tester"},
+        )
+        assert reg.status_code == 200
+        token = reg.json()["access_token"]
+        user_id = reg.json()["user"]["id"]
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-Client-Timeout": "0.1",  # Client only waits 0.1s
+            **API_KEY_HEADER,
+        }
+
+        unique_phrase = f"Câu văn thử nghiệm X-Client-Timeout header {time.time()}"
+        cache_key = cache_service.get_cache_key("minh_duc", unique_phrase, smart_pause=True)
+
+        # 1. Request synthesis with 0.1s client timeout
+        res = await ac.post(
+            "/v1/audio/speech",
+            headers=headers,
+            json={"text": unique_phrase, "voice": "minh_duc"},
+        )
+        # Gateway returns 499 (Client Closed Request / Timed out)
+        assert res.status_code == 499
+
+        # Quota must be rolled back to 0
+        used_after_timeout = await get_daily_usage(user_id)
+        assert used_after_timeout == 0
+
+        # Unbilled cache file must be saved
+        unbilled_file = cache_service.get_unbilled_cached_file(cache_key)
+        assert unbilled_file is not None
+        assert unbilled_file.exists()
+        assert cache_service.get_cached_file(cache_key) is None
+
+        # 2. Client retries (with standard timeout)
+        retry_headers = {"Authorization": f"Bearer {token}", **API_KEY_HEADER}
+        res_retry = await ac.post(
+            "/v1/audio/speech",
+            headers=retry_headers,
+            json={"text": unique_phrase, "voice": "minh_duc"},
+        )
+        assert res_retry.status_code == 200
+        assert res_retry.headers.get("x-cache-status") == "HIT-CLAIMED"
+
+        # Quota is now deducted
+        assert await get_daily_usage(user_id) == len(unique_phrase)
+
+        # File is promoted to standard cache
+        assert cache_service.get_unbilled_cached_file(cache_key) is None
+        assert cache_service.get_cached_file(cache_key) is not None
+
+        # 3. Third call is instant HIT
+        res_3rd = await ac.post(
+            "/v1/audio/speech",
+            headers=retry_headers,
+            json={"text": unique_phrase, "voice": "minh_duc"},
+        )
+        assert res_3rd.status_code == 200
+        assert res_3rd.headers.get("x-cache-status") == "HIT"
+
+        # Worker was called only ONCE
+        assert synth_call_count == 1
+
+
