@@ -255,13 +255,35 @@ async def get_daily_usage(user_id: str) -> int:
 
 
 async def check_rate_limit(user_id: str, max_requests: int = RATE_LIMIT_REQUESTS_PER_MINUTE) -> bool:
-    """Enforce per-minute sliding window rate limiting."""
-    key = f"ratelimit:{user_id}:{int(time.time() // 60)}"
+    """
+    Enforce per-minute sliding window rate limiting (Cloudflare Sliding Window Counter).
+    Eliminates edge-spike burst vulnerabilities at minute boundaries by weighting
+    the previous minute window:
+        estimated_requests = current_count + previous_count * (1 - time_elapsed_ratio)
+    """
+    now = time.time()
+    current_minute = int(now // 60)
+    prev_minute = current_minute - 1
+
+    curr_key = f"ratelimit:{user_id}:{current_minute}"
+    prev_key = f"ratelimit:{user_id}:{prev_minute}"
+
+    time_in_current = now % 60.0
+    prev_weight = 1.0 - (time_in_current / 60.0)
+
     try:
-        count = await redis_client.incrby(key, 1)
-        if count == 1:
-            await redis_client.expire(key, 70)
-        return count <= max_requests
+        prev_raw = await redis_client.get(prev_key)
+        prev_count = int(prev_raw) if prev_raw else 0
+
+        curr_count = await redis_client.incrby(curr_key, 1)
+        if curr_count == 1:
+            await redis_client.expire(curr_key, 130)
+
+        estimated_requests = curr_count + (prev_count * prev_weight)
+        if estimated_requests > max_requests:
+            await redis_client.incrby(curr_key, -1)
+            return False
+        return True
     except Exception:
         return True
 
