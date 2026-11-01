@@ -2667,7 +2667,8 @@ async function saveDefaultUserLimits() {
   const speechLimit = parseInt(document.getElementById('defaultUserSpeechLimitInput')?.value || '2000', 10);
   const previewLimit = parseInt(document.getElementById('defaultUserPreviewLimitInput')?.value || '250', 10);
   const maxConcurrent = parseInt(document.getElementById('defaultUserConcurrentInput')?.value || '1', 10);
-  const maxQueue = parseInt(document.getElementById('defaultUserQueueInput')?.value || '1', 10);
+  const queueVal = document.getElementById('defaultUserQueueInput')?.value;
+  const maxQueue = queueVal !== '' && queueVal !== undefined ? parseInt(queueVal, 10) : 1;
 
   try {
     const res = await apiRequest('/v1/management/settings', {
@@ -2696,7 +2697,8 @@ async function saveDefaultUserLimits() {
 
 async function saveServerConcurrencySettings() {
   const maxConcurrent = parseInt(document.getElementById('serverMaxConcurrentTtsInput')?.value || '2', 10);
-  const maxQueue = parseInt(document.getElementById('serverMaxQueueWaitersInput')?.value || '8', 10);
+  const serverQueueVal = document.getElementById('serverMaxQueueWaitersInput')?.value;
+  const maxQueue = serverQueueVal !== '' && serverQueueVal !== undefined ? parseInt(serverQueueVal, 10) : 8;
 
   try {
     const res = await apiRequest('/v1/management/settings', {
@@ -2901,7 +2903,8 @@ async function submitEditUser() {
   const speech = parseInt(document.getElementById('editUserSpeechLimitInput')?.value || '2000', 10);
   const preview = parseInt(document.getElementById('editUserPreviewLimitInput')?.value || '250', 10);
   const concurrent = parseInt(document.getElementById('editUserConcurrentInput')?.value || '1', 10);
-  const queue = parseInt(document.getElementById('editUserQueueInput')?.value || '1', 10);
+  const queueVal = document.getElementById('editUserQueueInput')?.value;
+  const queue = queueVal !== '' && queueVal !== undefined ? parseInt(queueVal, 10) : 1;
 
   try {
     const res = await apiRequest(`/v1/management/users/${id}`, {

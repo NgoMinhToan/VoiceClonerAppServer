@@ -131,6 +131,20 @@ def test_management_update_user_all_limits():
     u_updated = next((u for u in list_res2.json() if u["id"] == user_id), None)
     assert u_updated["daily_tts_char_limit"] == 150000
     assert u_updated["max_concurrent_tts"] == 3
+    assert u_updated["max_queue_waiters"] == 4
+
+    # Verify updating max_queue_waiters to 0 persists and returns 0 (not overridden by default 1)
+    patch_zero_res = client.patch(
+        f"/v1/management/users/{user_id}",
+        headers={"X-Management-Key": m_key},
+        json={"max_queue_waiters": 0}
+    )
+    assert patch_zero_res.status_code == 200
+    assert patch_zero_res.json()["max_queue_waiters"] == 0
+
+    list_res3 = client.get("/v1/management/users", headers={"X-Management-Key": m_key})
+    u_zero = next((u for u in list_res3.json() if u["id"] == user_id), None)
+    assert u_zero["max_queue_waiters"] == 0
 
 
 def test_management_users_returns_accurate_slots_and_tts_chars(monkeypatch):

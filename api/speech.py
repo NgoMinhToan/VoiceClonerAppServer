@@ -144,7 +144,7 @@ async def create_speech(
     daily_limit = getattr(current_user, "daily_tts_char_limit", None) or default_limits.daily_tts_char_limit
     user_rate_limit = getattr(current_user, "rate_limit_requests_per_minute", None) or default_limits.rate_limit_requests_per_minute
     user_concurrent = getattr(current_user, "max_concurrent_tts", None) or default_limits.max_concurrent_tts
-    user_queue = getattr(current_user, "max_queue_waiters", None) or default_limits.max_queue_waiters
+    user_queue = getattr(current_user, "max_queue_waiters", None) if getattr(current_user, "max_queue_waiters", None) is not None else default_limits.max_queue_waiters
 
     if char_count > max_speech_limit:
         raise HTTPException(
@@ -612,7 +612,7 @@ async def preview_voice(
     daily_limit = getattr(current_user, "daily_tts_char_limit", None) or default_limits.daily_tts_char_limit
     user_rate_limit = getattr(current_user, "rate_limit_requests_per_minute", None) or default_limits.rate_limit_requests_per_minute
     user_concurrent = getattr(current_user, "max_concurrent_tts", None) or default_limits.max_concurrent_tts
-    user_queue = getattr(current_user, "max_queue_waiters", None) or default_limits.max_queue_waiters
+    user_queue = getattr(current_user, "max_queue_waiters", None) if getattr(current_user, "max_queue_waiters", None) is not None else default_limits.max_queue_waiters
 
     if char_count > max_preview_limit:
         raise HTTPException(

@@ -50,15 +50,15 @@ def build_user_response(user: User, cloned_count: int = 0) -> UserResponse:
         full_name=user.full_name,
         avatar_url=user.avatar_url,
         auth_provider=user.auth_provider,
-        max_cloned_slots=getattr(user, "max_cloned_slots", None) or default_limits.max_cloned_slots,
+        max_cloned_slots=getattr(user, "max_cloned_slots", None) if getattr(user, "max_cloned_slots", None) is not None else default_limits.max_cloned_slots,
         cloned_voices_count=cloned_count,
         daily_tts_char_limit=daily_limit,
         daily_tts_chars_limit=daily_limit,
-        rate_limit_requests_per_minute=getattr(user, "rate_limit_requests_per_minute", None) or default_limits.rate_limit_requests_per_minute,
-        max_speech_char_limit=getattr(user, "max_speech_char_limit", None) or default_limits.max_speech_char_limit,
-        max_preview_char_limit=getattr(user, "max_preview_char_limit", None) or default_limits.max_preview_char_limit,
-        max_concurrent_tts=getattr(user, "max_concurrent_tts", None) or default_limits.max_concurrent_tts,
-        max_queue_waiters=getattr(user, "max_queue_waiters", None) or default_limits.max_queue_waiters,
+        rate_limit_requests_per_minute=getattr(user, "rate_limit_requests_per_minute", None) if getattr(user, "rate_limit_requests_per_minute", None) is not None else default_limits.rate_limit_requests_per_minute,
+        max_speech_char_limit=getattr(user, "max_speech_char_limit", None) if getattr(user, "max_speech_char_limit", None) is not None else default_limits.max_speech_char_limit,
+        max_preview_char_limit=getattr(user, "max_preview_char_limit", None) if getattr(user, "max_preview_char_limit", None) is not None else default_limits.max_preview_char_limit,
+        max_concurrent_tts=getattr(user, "max_concurrent_tts", None) if getattr(user, "max_concurrent_tts", None) is not None else default_limits.max_concurrent_tts,
+        max_queue_waiters=getattr(user, "max_queue_waiters", None) if getattr(user, "max_queue_waiters", None) is not None else default_limits.max_queue_waiters,
     )
 
 
