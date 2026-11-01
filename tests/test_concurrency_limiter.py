@@ -59,12 +59,12 @@ async def test_concurrency_limiter_releases_on_error():
     assert entered is True
 
 
-def test_gateway_timeout_defaults_are_120_seconds():
-    # 1. Check model_dispatcher http client timeout
+def test_gateway_timeout_defaults_are_configured():
+    # 1. Check model_dispatcher http client timeout (configured to 300.0s to allow long model synthesis)
     client = model_dispatcher._get_http_client()
-    assert client.timeout.read == 120.0
+    assert client.timeout.read == 300.0
 
-    # 2. Check UserConcurrencyLimiter.acquire default timeout_sec
+    # 2. Check UserConcurrencyLimiter.acquire default timeout_sec (120.0s)
     sig = inspect.signature(UserConcurrencyLimiter.acquire)
     assert sig.parameters["timeout_sec"].default == 120.0
 
