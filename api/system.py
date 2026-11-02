@@ -36,6 +36,7 @@ async def system_status():
     """System hardware and benchmark metrics aligned with Android and Web clients."""
     settings = settings_manager.get_settings()
     workers_count = len(settings.model_workers)
+    total_active_streams = sum(w.max_concurrent for w in settings.model_workers if w.is_active) or 1
 
     return SystemStatusResponse(
         status="online",
@@ -45,13 +46,13 @@ async def system_status():
         hardware=SystemHardwareInfo(
             device_type="CPU Cluster",
             device_name=f"Host: {get_local_ip()}:{settings.server.port}",
-            threads=settings.concurrency.max_concurrent_tts * 4,
+            threads=total_active_streams * 4,
             memory_used_mb=512,
             temperature_celsius=42,
         ),
         benchmarks=SystemBenchmarks(
             avg_ttfa_ms=120,
             active_streams=0,
-            max_concurrent_streams=settings.concurrency.max_concurrent_tts,
+            max_concurrent_streams=total_active_streams,
         ),
     )
