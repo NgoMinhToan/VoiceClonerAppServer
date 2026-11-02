@@ -2699,7 +2699,6 @@ async function saveDefaultUserLimits() {
 async function saveSystemSettings() {
   await saveDefaultUserLimits();
 }
-}
 
 async function saveCacheSettings() {
   const maxSize = parseInt(document.getElementById('maxCacheSizeMbInput')?.value || '2048', 10);

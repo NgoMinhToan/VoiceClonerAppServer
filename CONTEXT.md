@@ -47,6 +47,7 @@
   - Removed dummy fallback audio (sine wave 220Hz) and zero-vector `.npz` embeddings; requests fail with 503 if no workers are reachable.
   - Removed dead server-level fields `max_concurrent_tts` and `max_queue_waiters` from `concurrency` settings; server capacity is now dynamically computed from active worker limits.
   - Updated Dashboard UI: Worker cards display `Max: N luồng`, worker modal provides max concurrent stream configuration, and server concurrency card displays read-only computed infrastructure capacity (`Total Active Streams` and `Active/Total Workers`).
+  - Added frontend unit test `test_dashboard_js_syntax_is_valid` in `tests/test_dashboard_ui.py` running Node.js syntax parsing to ensure static JS assets have zero syntax errors.
 
 ### Upstream Worker & Concurrency Queue Timeout Alignment (Nov 2026)
 - **120s Timeout Synchronization**:

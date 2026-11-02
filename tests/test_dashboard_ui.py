@@ -73,4 +73,22 @@ def test_dashboard_js_implements_keeper_logic():
     assert "saveSystemSettings" in js
 
 
+def test_dashboard_js_syntax_is_valid():
+    import subprocess
+    import shutil
+    from pathlib import Path
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        pytest.skip("Node.js not installed in environment")
+
+    js_path = Path("VoiceClonerAppServer/static/dashboard/app.js")
+    if not js_path.exists():
+        js_path = Path("static/dashboard/app.js")
+
+    res = subprocess.run([node_bin, "-c", str(js_path)], capture_output=True, text=True)
+    assert res.returncode == 0, f"app.js syntax error:\n{res.stderr}"
+
+
+
 
