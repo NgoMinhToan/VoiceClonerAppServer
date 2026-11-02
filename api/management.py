@@ -52,7 +52,7 @@ class CreateWorkerRequest(BaseModel):
     id: str = Field(..., min_length=1, max_length=100)
     url: str = Field(..., min_length=1)
     api_key: Optional[str] = ""
-    weight: int = Field(1, ge=1, le=100)
+    max_concurrent: int = Field(2, ge=1, le=64)
     is_active: bool = True
 
 
@@ -129,7 +129,7 @@ async def list_workers():
             "id": worker.id,
             "url": worker.url,
             "api_key_masked": worker.api_key[:4] + "****" if len(worker.api_key) > 4 else ("set" if worker.api_key else "none"),
-            "weight": worker.weight,
+            "max_concurrent": worker.max_concurrent,
             "is_active": worker.is_active,
             "telemetry": ping,
         }
@@ -161,7 +161,7 @@ async def create_worker(payload: CreateWorkerRequest):
         "id": clean_id,
         "url": clean_url,
         "api_key": (payload.api_key or "").strip(),
-        "weight": payload.weight,
+        "max_concurrent": payload.max_concurrent,
         "is_active": payload.is_active,
     }
     workers.append(new_worker)

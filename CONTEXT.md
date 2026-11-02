@@ -39,6 +39,14 @@
 
 ## 3. Completed Work
 
+### Per-Worker Concurrency Limits & Utilization-Based Load Balancing (Nov 2026)
+- **Per-Worker Capacity & Utilization Load Balancing**:
+  - Replaced legacy `weight` with `max_concurrent` (1-64 streams, default 2) in `ModelWorkerConfig` and management endpoints (`/v1/management/workers`).
+  - Implemented utilization-ratio load balancing (`active_jobs / max_concurrent`) in `services/model_dispatcher.py` with automatic capacity gating (skips workers at full capacity) and round-robin tiebreaker.
+  - Implemented 1x automatic retry on 5xx or connection/network errors to an alternate capable worker node, with 4xx fast-fail.
+  - Removed dummy fallback audio (sine wave 220Hz) and zero-vector `.npz` embeddings; requests fail with 503 if no workers are reachable.
+  - Removed dead server-level fields `max_concurrent_tts` and `max_queue_waiters` from `concurrency` settings; server capacity is now dynamically computed from active worker limits.
+
 ### Upstream Worker & Concurrency Queue Timeout Alignment (Nov 2026)
 - **120s Timeout Synchronization**:
   - Aligned upstream worker HTTP read timeout in `services/model_dispatcher.py` (`_get_http_client()`) from 60.0s to 120.0s.
