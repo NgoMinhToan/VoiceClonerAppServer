@@ -249,28 +249,10 @@ class ModelDispatcher:
         ref_npz_base64: Optional[str] = None,
     ) -> Tuple[bytes, float, str]:
         """
-        Dispatch TTS synthesis to chosen capable worker.
+        Dispatch TTS synthesis to chosen capable worker with 1x retry on 5xx or connection errors.
         Returns: (wav_audio_bytes, execution_time_sec, worker_id)
         """
         is_clone = bool(ref_npz_base64 or ref_audio_path or ref_npz_path or (voice and voice.startswith("cloned_")))
-        selection = self._select_worker(voice_id=voice, is_clone=is_clone)
-
-        if selection is None:
-            # Fallback mock synthesis if no capable workers are reachable
-            logger.info(f"No capable workers available for voice='{voice}'. Producing fallback 48kHz WAV audio.")
-            t0 = time.perf_counter()
-            duration = min(3.0, max(0.5, len(text) * 0.05 / max(0.5, speed)))
-            sr = 48000
-            t = np.linspace(0, duration, int(sr * duration), endpoint=False, dtype=np.float32)
-            base_freq = 220.0 * (2.0 ** (pitch / 12.0))
-            audio = 0.25 * np.sin(2.0 * np.pi * base_freq * t)
-            buf = io.BytesIO()
-            sf.write(buf, audio, sr, format="WAV", subtype="PCM_16")
-            return buf.getvalue(), time.perf_counter() - t0, "in-process-fallback"
-
-        worker, worker_url = selection
-        client = self._get_http_client()
-        headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
 
         # If ref_npz_path provided on server, encode to base64 for network transfer
         npz_b64 = ref_npz_base64
@@ -294,63 +276,123 @@ class ModelDispatcher:
             "ref_npz_base64": npz_b64,
         }
 
+        client = self._get_http_client()
+        tried_urls: Set[str] = set()
+        max_attempts = 2
+        last_error: Optional[Exception] = None
         t0 = time.perf_counter()
-        try:
-            resp = await client.post(
-                f"{worker_url}/internal/v1/synthesize",
-                json=payload,
-                headers=headers,
-                timeout=300.0,
-            )
-            if resp.status_code == 200:
-                self._record_success(worker_url)
-                return resp.content, time.perf_counter() - t0, worker.id
-            self._record_failure(worker_url)
-            raise RuntimeError(f"Worker {worker.id} returned status {resp.status_code}: {resp.text}")
-        except Exception as e:
-            self._record_failure(worker_url)
-            logger.error(f"Error dispatching to worker {worker.id}: {e}")
-            raise
-        finally:
-            self._release_worker(worker_url)
+
+        for attempt in range(max_attempts):
+            selection = self._select_worker(voice_id=voice, is_clone=is_clone, exclude_urls=tried_urls)
+            if selection is None:
+                if attempt == 0:
+                    raise RuntimeError(f"No capable workers available for voice='{voice}' (is_clone={is_clone})")
+                break
+
+            worker, worker_url = selection
+            tried_urls.add(worker_url)
+            headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
+
+            try:
+                resp = await client.post(
+                    f"{worker_url}/internal/v1/synthesize",
+                    json=payload,
+                    headers=headers,
+                    timeout=300.0,
+                )
+                if resp.status_code == 200:
+                    self._record_success(worker_url)
+                    return resp.content, time.perf_counter() - t0, worker.id
+
+                self._record_failure(worker_url)
+                if resp.status_code >= 500:
+                    logger.warning(
+                        f"Worker {worker.id} ({worker_url}) returned HTTP {resp.status_code}. Attempt {attempt + 1}/{max_attempts}."
+                    )
+                    last_error = RuntimeError(f"Worker {worker.id} returned status {resp.status_code}: {resp.text}")
+                    continue
+                else:
+                    raise RuntimeError(f"Worker {worker.id} returned status {resp.status_code}: {resp.text}")
+
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError) as net_err:
+                self._record_failure(worker_url)
+                logger.warning(
+                    f"Worker {worker.id} ({worker_url}) network error ({net_err}). Attempt {attempt + 1}/{max_attempts}."
+                )
+                last_error = net_err
+                continue
+            except Exception as e:
+                self._record_failure(worker_url)
+                logger.error(f"Error dispatching to worker {worker.id}: {e}")
+                raise
+            finally:
+                self._release_worker(worker_url)
+
+        if last_error:
+            raise last_error
+        raise RuntimeError(f"No capable workers available for voice='{voice}' (is_clone={is_clone})")
 
     async def extract_embedding(self, audio_bytes: bytes, filename: str = "sample.wav") -> bytes:
         """
         Forward reference audio to upstream model worker to extract .npz speaker embedding.
-        Routes to workers supporting voice cloning.
+        Routes to workers supporting voice cloning with 1x retry on 5xx or connection errors.
         Returns: raw bytes of the .npz file.
         """
-        selection = self._select_worker(is_clone=True)
-        if selection is None:
-            # Fallback mock embedding if no upstream workers available
-            logger.info("No upstream workers available. Producing fallback .npz embedding.")
-            buf = io.BytesIO()
-            np.savez(buf, speaker_emb=np.zeros(192, dtype=np.float32), codes=np.zeros((1, 256), dtype=np.int64))
-            return buf.getvalue()
-
-        worker, worker_url = selection
         client = self._get_http_client()
-        headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
         files = {"audio_file": (filename, audio_bytes, "audio/wav")}
+        tried_urls: Set[str] = set()
+        max_attempts = 2
+        last_error: Optional[Exception] = None
 
-        try:
-            resp = await client.post(
-                f"{worker_url}/internal/v1/embed",
-                files=files,
-                headers=headers,
-                timeout=60.0,
-            )
-            if resp.status_code == 200:
-                self._record_success(worker_url)
-                return resp.content
-            self._record_failure(worker_url)
-            raise RuntimeError(f"Worker {worker.id} embed returned status {resp.status_code}: {resp.text}")
-        except Exception as e:
-            self._record_failure(worker_url)
-            logger.error(f"Error extracting embedding with worker {worker.id}: {e}")
-            raise
-        finally:
-            self._release_worker(worker_url)
+        for attempt in range(max_attempts):
+            selection = self._select_worker(is_clone=True, exclude_urls=tried_urls)
+            if selection is None:
+                if attempt == 0:
+                    raise RuntimeError("No upstream workers available for cloning embedding extraction")
+                break
+
+            worker, worker_url = selection
+            tried_urls.add(worker_url)
+            headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
+
+            try:
+                resp = await client.post(
+                    f"{worker_url}/internal/v1/embed",
+                    files=files,
+                    headers=headers,
+                    timeout=60.0,
+                )
+                if resp.status_code == 200:
+                    self._record_success(worker_url)
+                    return resp.content
+
+                self._record_failure(worker_url)
+                if resp.status_code >= 500:
+                    logger.warning(
+                        f"Worker {worker.id} embed returned HTTP {resp.status_code}. Attempt {attempt + 1}/{max_attempts}."
+                    )
+                    last_error = RuntimeError(f"Worker {worker.id} embed returned status {resp.status_code}: {resp.text}")
+                    continue
+                else:
+                    raise RuntimeError(f"Worker {worker.id} embed returned status {resp.status_code}: {resp.text}")
+
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError) as net_err:
+                self._record_failure(worker_url)
+                logger.warning(
+                    f"Worker {worker.id} embed network error ({net_err}). Attempt {attempt + 1}/{max_attempts}."
+                )
+                last_error = net_err
+                continue
+            except Exception as e:
+                self._record_failure(worker_url)
+                logger.error(f"Error extracting embedding with worker {worker.id}: {e}")
+                raise
+            finally:
+                self._release_worker(worker_url)
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("No upstream workers available for cloning embedding extraction")
 
     async def aclose(self):
         if self._http_client and not self._http_client.is_closed:

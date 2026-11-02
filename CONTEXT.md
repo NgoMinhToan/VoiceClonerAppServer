@@ -28,6 +28,7 @@
   - Stamped directly onto database `User` records upon registration, allowing customized quotas per user.
   - Per-Worker Concurrency (`model_workers` in `settings.json`): Each worker defines `max_concurrent` (1-64 streams, default 2) replacing legacy `weight`.
   - Load Balancer: Capability-Aware Utilization-Based Load Balancer (`active_jobs / max_concurrent`) with per-worker capacity enforcement (skips workers at or over `max_concurrent`) and round-robin tiebreaking.
+  - Failover & Retry: Automatic 1x retry to an alternate capable worker on 5xx or connection/network errors (excluding failed worker via `exclude_urls`). Client 4xx errors fail immediately without retry. Fake fallback sine-wave audio and empty mock embeddings removed; requests fail with 503 if no workers available.
   - Server Concurrency: Computed dynamically from active worker capacity (`sum(w.max_concurrent)`). Dead server-level fields `concurrency.max_concurrent_tts` and `concurrency.max_queue_waiters` removed.
 - **Concurrency**:
   - TTS (`/v1/audio/speech`): Controlled by `tts_slot_guard` (asyncio.Semaphore, dynamic resizing) with queueing and client disconnect cancellation.
