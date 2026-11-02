@@ -103,12 +103,15 @@ class ModelDispatcher:
         self,
         voice_id: Optional[str] = None,
         is_clone: bool = False,
+        exclude_urls: Optional[Set[str]] = None,
     ) -> Optional[Tuple[ModelWorkerConfig, str]]:
         """
-        Capability-Aware Least-Active Load Balancer:
-        1. Filters active workers against circuit breaker status.
+        Capability-Aware Utilization-Based Load Balancer:
+        1. Filters active workers against circuit breaker status (and optional excluded URLs).
         2. Filters candidates to only those supporting voice_id (or cloning).
-        3. Selects the candidate with the fewest active jobs (with round-robin tiebreaking).
+        3. Filters out workers at or over their max_concurrent capacity limit.
+        4. Selects candidate with the lowest utilization ratio (active_jobs / max_concurrent).
+        5. Round-robin tiebreaker when multiple workers have equal utilization ratio.
         """
         settings = settings_manager.get_settings()
         workers = [w for w in settings.model_workers if w.is_active]
@@ -119,9 +122,12 @@ class ModelDispatcher:
         now = time.time()
 
         with self._lock:
-            # 1. Check circuit breaker state
+            # 1. Check circuit breaker state and exclusions
+            norm_excludes = {u.rstrip("/") for u in exclude_urls} if exclude_urls else set()
             healthy_workers: List[ModelWorkerConfig] = []
             for w in workers:
+                if w.url.rstrip("/") in norm_excludes:
+                    continue
                 stat = self._get_worker_stat(w.url)
                 if stat["circuit_state"] == "closed":
                     healthy_workers.append(w)
@@ -171,12 +177,27 @@ class ModelDispatcher:
                 )
                 return None
 
-            # 3. Least-active selection on capable candidates
-            sorted_candidates = sorted(capable_workers, key=lambda w: self._get_worker_stat(w.url)["active_jobs"])
-            min_active = self._get_worker_stat(sorted_candidates[0].url)["active_jobs"]
-            tied = [w for w in sorted_candidates if self._get_worker_stat(w.url)["active_jobs"] == min_active]
+            # 3. Filter candidates by max_concurrent capacity
+            available_workers = [
+                w for w in capable_workers
+                if self._get_worker_stat(w.url)["active_jobs"] < getattr(w, "max_concurrent", 2)
+            ]
+            if not available_workers:
+                logger.warning(
+                    f"All {len(capable_workers)} capable workers are at maximum capacity for voice='{voice_id}'."
+                )
+                return None
 
-            # 4. Round-robin tiebreaker
+            # 4. Utilization-ratio selection on available candidates
+            def _utilization_ratio(w: ModelWorkerConfig) -> float:
+                cap = max(getattr(w, "max_concurrent", 2), 1)
+                return self._get_worker_stat(w.url)["active_jobs"] / cap
+
+            sorted_candidates = sorted(available_workers, key=_utilization_ratio)
+            min_ratio = _utilization_ratio(sorted_candidates[0])
+            tied = [w for w in sorted_candidates if abs(_utilization_ratio(w) - min_ratio) < 1e-6]
+
+            # 5. Round-robin tiebreaker
             chosen = tied[self._round_robin_idx % len(tied)]
             self._round_robin_idx += 1
             self._get_worker_stat(chosen.url)["active_jobs"] += 1

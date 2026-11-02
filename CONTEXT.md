@@ -27,6 +27,7 @@
   - Configurable Default User Limits (`default_user_limits` in `settings.json`): `max_cloned_slots` (3), `daily_tts_char_limit` (50,000), `rate_limit_requests_per_minute` (60), `max_speech_char_limit` (2,000), `max_preview_char_limit` (250), `max_concurrent_tts` (1), `max_queue_waiters` (1).
   - Stamped directly onto database `User` records upon registration, allowing customized quotas per user.
   - Per-Worker Concurrency (`model_workers` in `settings.json`): Each worker defines `max_concurrent` (1-64 streams, default 2) replacing legacy `weight`.
+  - Load Balancer: Capability-Aware Utilization-Based Load Balancer (`active_jobs / max_concurrent`) with per-worker capacity enforcement (skips workers at or over `max_concurrent`) and round-robin tiebreaking.
   - Server Concurrency: Computed dynamically from active worker capacity (`sum(w.max_concurrent)`). Dead server-level fields `concurrency.max_concurrent_tts` and `concurrency.max_queue_waiters` removed.
 - **Concurrency**:
   - TTS (`/v1/audio/speech`): Controlled by `tts_slot_guard` (asyncio.Semaphore, dynamic resizing) with queueing and client disconnect cancellation.
