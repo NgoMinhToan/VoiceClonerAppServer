@@ -2272,7 +2272,7 @@ async function fetchWorkers() {
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-${statusColor}-500/10 text-${statusColor}-400 border border-${statusColor}-500/20">
                   ${isOnline ? 'Online' : 'Offline'} • ${latencyStr}
                 </span>
-                <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">Weight: ${w.weight}</span>
+                <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">Max: ${w.max_concurrent || 2} luồng</span>
               </div>
               <span class="text-xs text-slate-400 font-mono mt-0.5 block">${w.url}</span>
             </div>
@@ -2282,7 +2282,7 @@ async function fetchWorkers() {
               <i class="fa-solid fa-bolt text-amber-400"></i>
               <span>Test Ping</span>
             </button>
-            <button onclick="openEditWorkerModal('${w.id}', '${w.url}', '${w.weight || 1}', ${w.is_active})" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1">
+            <button onclick="openEditWorkerModal('${w.id}', '${w.url}', ${w.max_concurrent || 2}, ${w.is_active})" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1">
               <i class="fa-solid fa-pen-to-square text-indigo-400"></i>
               <span>Sửa</span>
             </button>
@@ -2296,6 +2296,14 @@ async function fetchWorkers() {
         </div>
       `;
     }).join('');
+
+    // Update server concurrency read-only summary cards
+    const activeWorkers = workers.filter(w => w.is_active);
+    const totalStreams = activeWorkers.reduce((acc, w) => acc + (w.max_concurrent || 2), 0);
+    const streamsDisp = document.getElementById('serverTotalStreamsDisplay');
+    if (streamsDisp) streamsDisp.textContent = `${totalStreams} luồng`;
+    const workersDisp = document.getElementById('serverActiveWorkersDisplay');
+    if (workersDisp) workersDisp.textContent = `${activeWorkers.length}/${workers.length} nodes`;
   } catch (err) {
     console.error('fetchWorkers failed', err);
   }
@@ -2331,12 +2339,12 @@ function openCreateWorkerModal() {
   document.getElementById('workerModalIdInput').disabled = false;
   document.getElementById('workerModalUrlInput').value = '';
   document.getElementById('workerModalApiKeyInput').value = '';
-  document.getElementById('workerModalWeightInput').value = '1';
+  document.getElementById('workerModalMaxConcurrentInput').value = '2';
   document.getElementById('workerModalActiveInput').value = 'true';
   modal.classList.remove('hidden');
 }
 
-function openEditWorkerModal(id, url, weight, isActive) {
+function openEditWorkerModal(id, url, maxConcurrent, isActive) {
   const modal = document.getElementById('workerModal');
   if (!modal) return;
   document.getElementById('workerModalTitle').textContent = `Chỉnh Sửa Worker: ${id}`;
@@ -2345,7 +2353,7 @@ function openEditWorkerModal(id, url, weight, isActive) {
   document.getElementById('workerModalIdInput').disabled = true;
   document.getElementById('workerModalUrlInput').value = url;
   document.getElementById('workerModalApiKeyInput').value = '';
-  document.getElementById('workerModalWeightInput').value = weight;
+  document.getElementById('workerModalMaxConcurrentInput').value = maxConcurrent || 2;
   document.getElementById('workerModalActiveInput').value = isActive ? 'true' : 'false';
   modal.classList.remove('hidden');
 }
@@ -2369,7 +2377,7 @@ async function submitWorkerModal() {
   const id = document.getElementById('workerModalIdInput')?.value.trim();
   const url = document.getElementById('workerModalUrlInput')?.value.trim();
   const apiKey = document.getElementById('workerModalApiKeyInput')?.value.trim();
-  const weight = parseInt(document.getElementById('workerModalWeightInput')?.value || '1', 10);
+  const maxConcurrent = parseInt(document.getElementById('workerModalMaxConcurrentInput')?.value || '2', 10);
   const isActive = document.getElementById('workerModalActiveInput')?.value === 'true';
 
   if (!id || !url) {
@@ -2381,7 +2389,7 @@ async function submitWorkerModal() {
     if (mode === 'create') {
       const res = await apiRequest('/v1/management/workers', {
         method: 'POST',
-        body: JSON.stringify({ id, url, api_key: apiKey, weight, is_active: isActive }),
+        body: JSON.stringify({ id, url, api_key: apiKey, max_concurrent: maxConcurrent, is_active: isActive }),
       });
       if (res.ok) {
         showToast(`Đã thêm worker node ${id}!`, 'success');
@@ -2401,7 +2409,7 @@ async function submitWorkerModal() {
       if (target) {
         target.url = url;
         if (apiKey) target.api_key = apiKey;
-        target.weight = weight;
+        target.max_concurrent = maxConcurrent;
         target.is_active = isActive;
         const updateRes = await apiRequest('/v1/management/settings', {
           method: 'PUT',
@@ -2593,14 +2601,6 @@ async function fetchSettings() {
         if (queue) queue.value = data.default_user_limits.max_queue_waiters ?? 1;
       }
 
-      // Server Concurrency Infrastructure
-      if (data.concurrency) {
-        const serverTts = document.getElementById('serverMaxConcurrentTtsInput');
-        if (serverTts) serverTts.value = data.concurrency.max_concurrent_tts ?? 2;
-        const serverQueue = document.getElementById('serverMaxQueueWaitersInput');
-        if (serverQueue) serverQueue.value = data.concurrency.max_queue_waiters ?? 8;
-      }
-
       // Audio Cache
       if (data.audio_cache) {
         const size = document.getElementById('maxCacheSizeMbInput');
@@ -2695,35 +2695,10 @@ async function saveDefaultUserLimits() {
   }
 }
 
-async function saveServerConcurrencySettings() {
-  const maxConcurrent = parseInt(document.getElementById('serverMaxConcurrentTtsInput')?.value || '2', 10);
-  const serverQueueVal = document.getElementById('serverMaxQueueWaitersInput')?.value;
-  const maxQueue = serverQueueVal !== '' && serverQueueVal !== undefined ? parseInt(serverQueueVal, 10) : 8;
-
-  try {
-    const res = await apiRequest('/v1/management/settings', {
-      method: 'PUT',
-      body: JSON.stringify({
-        concurrency: {
-          max_concurrent_tts: maxConcurrent,
-          max_queue_waiters: maxQueue,
-        },
-      }),
-    });
-    if (res.ok) {
-      showToast('Đã lưu cấu hình concurrency server thành công!', 'success');
-    } else {
-      showToast('Không thể lưu cấu hình concurrency server!', 'error');
-    }
-  } catch (e) {
-    showToast('Lỗi gửi cập nhật concurrency server', 'error');
-  }
-}
-
 // Keep saveSystemSettings for backward compatibility
 async function saveSystemSettings() {
   await saveDefaultUserLimits();
-  await saveServerConcurrencySettings();
+}
 }
 
 async function saveCacheSettings() {
