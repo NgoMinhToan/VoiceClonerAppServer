@@ -32,7 +32,7 @@
       "id": "worker-primary",
       "url": "http://model-service:8001",
       "api_key": "vtts_worker_secret_key_123",
-      "weight": 1,
+      "max_concurrent": 2,
       "is_active": true
     }
   ],
@@ -46,8 +46,6 @@
     "max_queue_waiters": 1
   },
   "concurrency": {
-    "max_concurrent_tts": 2,
-    "max_queue_waiters": 8,
     "daily_tts_char_limit": 100000,
     "rate_limit_requests_per_minute": 60,
     "max_preview_char_limit": 250,

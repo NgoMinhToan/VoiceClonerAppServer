@@ -19,7 +19,7 @@ async def test_worker_management_api_crud():
                     "id": "bad-worker",
                     "url": "ftp://127.0.0.1:8009",
                     "api_key": "",
-                    "weight": 1,
+                    "max_concurrent": 1,
                     "is_active": True,
                 },
             )
@@ -33,7 +33,7 @@ async def test_worker_management_api_crud():
                     "id": test_worker_id,
                     "url": "http://127.0.0.1:8009/",
                     "api_key": "secret",
-                    "weight": 2,
+                    "max_concurrent": 2,
                     "is_active": True,
                 },
             )
@@ -78,3 +78,39 @@ async def test_cache_purge_api():
         data = res.json()
         assert data["status"] == "success"
         assert "deleted_files" in data
+
+
+@pytest.mark.asyncio
+async def test_worker_create_with_max_concurrent():
+    transport = ASGITransport(app=app)
+    headers = {"X-Management-Key": "vc_admin_secret_key_123"}
+    test_worker_id = "test-worker-concurrent-4"
+
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        try:
+            res = await ac.post(
+                "/v1/management/workers",
+                headers=headers,
+                json={
+                    "id": test_worker_id,
+                    "url": "http://127.0.0.1:8009/",
+                    "api_key": "secret",
+                    "max_concurrent": 4,
+                    "is_active": True,
+                },
+            )
+            assert res.status_code == 201
+
+            list_res = await ac.get("/v1/management/workers", headers=headers)
+            assert list_res.status_code == 200
+            workers = list_res.json()
+            target = next((w for w in workers if w["id"] == test_worker_id), None)
+            assert target is not None
+            assert target["max_concurrent"] == 4
+            assert "weight" not in target
+        finally:
+            settings = settings_manager.get_settings()
+            cleaned = [w.model_dump() for w in settings.model_workers if w.id != test_worker_id]
+            if len(cleaned) != len(settings.model_workers):
+                settings_manager.update_settings({"model_workers": cleaned})
+

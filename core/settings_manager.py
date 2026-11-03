@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("VoiceClonerAppServer.SettingsManager")
 
@@ -35,16 +35,16 @@ class ClientApiKeyConfig(BaseModel):
 
 
 class ModelWorkerConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     id: str = Field(...)
     url: str = Field(...)
     api_key: str = Field("", description="Worker API key gửi kèm header X-API-Key")
-    weight: int = Field(1, ge=1, le=100)
+    max_concurrent: int = Field(2, ge=1, le=64, description="Số luồng TTS song song tối đa worker có thể xử lý")
     is_active: bool = Field(True)
 
 
 class ConcurrencyConfig(BaseModel):
-    max_concurrent_tts: int = Field(2, ge=1, le=64)
-    max_queue_waiters: int = Field(8, ge=0, le=256)
+    model_config = ConfigDict(extra="ignore")
     daily_tts_char_limit: Optional[int] = Field(100000, ge=1000)
     rate_limit_requests_per_minute: Optional[int] = Field(60, ge=1)
     max_preview_char_limit: Optional[int] = Field(250, ge=10, le=5000)
@@ -110,7 +110,7 @@ class SettingsManager:
                 id="worker-primary",
                 url="http://model-service:8001",
                 api_key="vtts_worker_secret_key_123",
-                weight=1,
+                max_concurrent=2,
                 is_active=True,
             )
         ]

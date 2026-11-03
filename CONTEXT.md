@@ -26,7 +26,10 @@
 - **Daily Quotas & Limits**:
   - Configurable Default User Limits (`default_user_limits` in `settings.json`): `max_cloned_slots` (3), `daily_tts_char_limit` (50,000), `rate_limit_requests_per_minute` (60), `max_speech_char_limit` (2,000), `max_preview_char_limit` (250), `max_concurrent_tts` (1), `max_queue_waiters` (1).
   - Stamped directly onto database `User` records upon registration, allowing customized quotas per user.
-  - Server Concurrency (`concurrency` in `settings.json`): Global infrastructure capabilities across worker nodes (`max_concurrent_tts`, `max_queue_waiters`).
+  - Per-Worker Concurrency (`model_workers` in `settings.json`): Each worker defines `max_concurrent` (1-64 streams, default 2) replacing legacy `weight`.
+  - Load Balancer: Capability-Aware Utilization-Based Load Balancer (`active_jobs / max_concurrent`) with per-worker capacity enforcement (skips workers at or over `max_concurrent`) and round-robin tiebreaking.
+  - Failover & Retry: Automatic 1x retry to an alternate capable worker on 5xx or connection/network errors (excluding failed worker via `exclude_urls`). Client 4xx errors fail immediately without retry. Fake fallback sine-wave audio and empty mock embeddings removed; requests fail with 503 if no workers available.
+  - Server Concurrency: Computed dynamically from active worker capacity (`sum(w.max_concurrent)`). Dead server-level fields `concurrency.max_concurrent_tts` and `concurrency.max_queue_waiters` removed.
 - **Concurrency**:
   - TTS (`/v1/audio/speech`): Controlled by `tts_slot_guard` (asyncio.Semaphore, dynamic resizing) with queueing and client disconnect cancellation.
   - Audio Cache HIT: Served in `< 10ms` from disk, quota-exempt.
@@ -35,6 +38,16 @@
 ---
 
 ## 3. Completed Work
+
+### Per-Worker Concurrency Limits & Utilization-Based Load Balancing (Nov 2026)
+- **Per-Worker Capacity & Utilization Load Balancing**:
+  - Replaced legacy `weight` with `max_concurrent` (1-64 streams, default 2) in `ModelWorkerConfig` and management endpoints (`/v1/management/workers`).
+  - Implemented utilization-ratio load balancing (`active_jobs / max_concurrent`) in `services/model_dispatcher.py` with automatic capacity gating (skips workers at full capacity) and round-robin tiebreaker.
+  - Implemented 1x automatic retry on 5xx or connection/network errors to an alternate capable worker node, with 4xx fast-fail.
+  - Removed dummy fallback audio (sine wave 220Hz) and zero-vector `.npz` embeddings; requests fail with 503 if no workers are reachable.
+  - Removed dead server-level fields `max_concurrent_tts` and `max_queue_waiters` from `concurrency` settings; server capacity is now dynamically computed from active worker limits.
+  - Updated Dashboard UI: Worker cards display `Max: N luồng`, worker modal provides max concurrent stream configuration, and server concurrency card displays read-only computed infrastructure capacity (`Total Active Streams` and `Active/Total Workers`).
+  - Added frontend unit test `test_dashboard_js_syntax_is_valid` in `tests/test_dashboard_ui.py` running Node.js syntax parsing to ensure static JS assets have zero syntax errors.
 
 ### Upstream Worker & Concurrency Queue Timeout Alignment (Nov 2026)
 - **120s Timeout Synchronization**:

@@ -99,11 +99,9 @@ def test_hot_reload_settings_persists():
     res = client.put(
         "/v1/management/settings",
         headers={"X-Management-Key": m_key},
-        json={"concurrency": {"max_concurrent_tts": 5, "max_queue_waiters": 12, "max_preview_char_limit": 300, "max_speech_char_limit": 2500}}
+        json={"concurrency": {"max_preview_char_limit": 300, "max_speech_char_limit": 2500}}
     )
     assert res.status_code == 200
-    assert settings_manager.get_settings().concurrency.max_concurrent_tts == 5
-    assert settings_manager.get_settings().concurrency.max_queue_waiters == 12
     assert settings_manager.get_settings().concurrency.max_preview_char_limit == 300
     assert settings_manager.get_settings().concurrency.max_speech_char_limit == 2500
 
@@ -111,7 +109,7 @@ def test_hot_reload_settings_persists():
     client.put(
         "/v1/management/settings",
         headers={"X-Management-Key": m_key},
-        json={"concurrency": {"max_concurrent_tts": 2, "max_queue_waiters": 8, "max_preview_char_limit": 250, "max_speech_char_limit": 2000}}
+        json={"concurrency": {"max_preview_char_limit": 250, "max_speech_char_limit": 2000}}
     )
 
 
@@ -319,4 +317,25 @@ def test_exempt_endpoints_accessible_without_client_key():
         headers={"X-Management-Key": m_key}
     )
     assert res_mgmt.status_code == 200
+
+
+def test_worker_max_concurrent_config():
+    from VoiceClonerAppServer.core.settings_manager import ModelWorkerConfig
+    w = ModelWorkerConfig(id="test", url="http://localhost:8001")
+    assert w.max_concurrent == 2
+    assert not hasattr(w, "weight")
+
+
+def test_concurrency_config_no_server_streams():
+    from VoiceClonerAppServer.core.settings_manager import ConcurrencyConfig
+    c = ConcurrencyConfig()
+    assert not hasattr(c, "max_concurrent_tts")
+    assert not hasattr(c, "max_queue_waiters")
+
+
+def test_worker_config_ignores_legacy_weight():
+    from VoiceClonerAppServer.core.settings_manager import ModelWorkerConfig
+    w = ModelWorkerConfig(id="test", url="http://localhost:8001", weight=5)
+    assert w.max_concurrent == 2
+
 

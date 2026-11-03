@@ -49,8 +49,9 @@ def test_dashboard_html_contains_keeper_tabs():
     assert "defaultUserPreviewLimitInput" in html
     assert "defaultUserConcurrentInput" in html
     assert "defaultUserQueueInput" in html
-    assert "serverMaxConcurrentTtsInput" in html
-    assert "serverMaxQueueWaitersInput" in html
+    assert "serverTotalStreamsDisplay" in html
+    assert "serverActiveWorkersDisplay" in html
+    assert "workerModalMaxConcurrentInput" in html
     assert "editUserDailyLimitInput" in html
     assert "CLIProxyAPI" not in html
     assert "tab-btn-ranking" not in html
@@ -67,10 +68,27 @@ def test_dashboard_js_implements_keeper_logic():
     assert "chartTrendsMain" in js
     assert "initAnalysisTokenUsageChart" in js
     assert "saveDefaultUserLimits" in js
-    assert "saveServerConcurrencySettings" in js
     assert "initAnalysisCompositionChart" in js
     assert "initAnalysisLatencyChart" in js
     assert "saveSystemSettings" in js
+
+
+def test_dashboard_js_syntax_is_valid():
+    import subprocess
+    import shutil
+    from pathlib import Path
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        pytest.skip("Node.js not installed in environment")
+
+    js_path = Path("VoiceClonerAppServer/static/dashboard/app.js")
+    if not js_path.exists():
+        js_path = Path("static/dashboard/app.js")
+
+    res = subprocess.run([node_bin, "-c", str(js_path)], capture_output=True, text=True)
+    assert res.returncode == 0, f"app.js syntax error:\n{res.stderr}"
+
 
 
 
