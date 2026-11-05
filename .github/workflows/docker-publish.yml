@@ -82,3 +82,5 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ steps.vars.outputs.image }}:latest
             ${{ env.REGISTRY }}/${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
