@@ -18,6 +18,11 @@ CIRCUIT_FAILURE_THRESHOLD = 3
 CIRCUIT_COOLDOWN_SEC = 30.0
 
 
+def _normalize_url(url: str) -> str:
+    """Canonical worker URL used as the key for every per-worker stat map."""
+    return (url or "").strip().rstrip("/")
+
+
 class WorkerCapability:
     def __init__(
         self,
@@ -50,15 +55,19 @@ class ModelDispatcher:
 
     def _get_worker_stat(self, url: str) -> Dict[str, Any]:
         with self._lock:
-            if url not in self._worker_stats:
-                self._worker_stats[url] = {
+            key = _normalize_url(url)
+            if key not in self._worker_stats:
+                self._worker_stats[key] = {
                     "active_jobs": 0,
                     "consecutive_failures": 0,
                     "circuit_state": "closed",
                     "last_failure_time": 0.0,
                     "probing": False,
+                    "healthy": True,
+                    "last_error": None,
+                    "last_probe_at": 0.0,
                 }
-            return self._worker_stats[url]
+            return self._worker_stats[key]
 
     def _record_success(self, url: str):
         with self._lock:
@@ -66,6 +75,8 @@ class ModelDispatcher:
             stat["consecutive_failures"] = 0
             stat["circuit_state"] = "closed"
             stat["probing"] = False
+            stat["healthy"] = True
+            stat["last_error"] = None
 
     def _record_failure(self, url: str):
         with self._lock:
@@ -75,6 +86,25 @@ class ModelDispatcher:
             if stat["consecutive_failures"] >= CIRCUIT_FAILURE_THRESHOLD:
                 stat["circuit_state"] = "open"
                 stat["probing"] = False
+                stat["healthy"] = False
+
+    def _is_configured_worker(self, url: str) -> bool:
+        key = _normalize_url(url)
+        return any(_normalize_url(w.url) == key for w in settings_manager.get_settings().model_workers)
+
+    def mark_worker_health(self, worker_url: str, healthy: bool, error: Optional[str] = None) -> None:
+        """Record a health probe result. Never mutates breaker counters or circuit state."""
+        with self._lock:
+            if not self._is_configured_worker(worker_url):
+                return
+            stat = self._get_worker_stat(worker_url)
+            stat["healthy"] = healthy
+            stat["last_probe_at"] = time.time()
+            stat["last_error"] = None if healthy else error
+
+    def get_worker_health(self, worker_url: str) -> Dict[str, Any]:
+        with self._lock:
+            return dict(self._get_worker_stat(worker_url))
 
     def register_worker_capabilities(
         self,
@@ -85,7 +115,7 @@ class ModelDispatcher:
     ):
         """Record advertised capabilities and supported voice IDs for a worker node."""
         with self._lock:
-            clean_url = worker_url.rstrip("/")
+            clean_url = _normalize_url(worker_url)
             self._worker_caps[clean_url] = WorkerCapability(
                 worker_id=worker_id,
                 worker_url=clean_url,
@@ -96,7 +126,7 @@ class ModelDispatcher:
 
     def get_worker_capabilities(self, worker_url: str) -> Optional[WorkerCapability]:
         with self._lock:
-            clean_url = worker_url.rstrip("/")
+            clean_url = _normalize_url(worker_url)
             return self._worker_caps.get(clean_url)
 
     def _select_worker(
@@ -122,32 +152,40 @@ class ModelDispatcher:
         now = time.time()
 
         with self._lock:
-            # 1. Check circuit breaker state and exclusions
-            norm_excludes = {u.rstrip("/") for u in exclude_urls} if exclude_urls else set()
+            # 1. Check circuit breaker state and exclusions.
+            # Health probes only gate workers whose breaker is closed: an open
+            # breaker must still be able to half-open and self-heal after the
+            # cooldown, otherwise a probed-down worker could never come back.
+            norm_excludes = {_normalize_url(u) for u in exclude_urls} if exclude_urls else set()
             healthy_workers: List[ModelWorkerConfig] = []
             for w in workers:
-                if w.url.rstrip("/") in norm_excludes:
+                key = _normalize_url(w.url)
+                if key in norm_excludes:
                     continue
-                stat = self._get_worker_stat(w.url)
-                if stat["circuit_state"] == "closed":
-                    healthy_workers.append(w)
-                elif stat["circuit_state"] == "open":
+                stat = self._get_worker_stat(key)
+                if stat["circuit_state"] == "open":
                     if now - stat["last_failure_time"] >= CIRCUIT_COOLDOWN_SEC:
                         stat["circuit_state"] = "half-open"
                         stat["probing"] = True
                         healthy_workers.append(w)
-                elif stat["circuit_state"] == "half-open" and stat["probing"]:
-                    healthy_workers.append(w)
+                    continue
+                if stat["circuit_state"] == "half-open":
+                    if stat["probing"]:
+                        healthy_workers.append(w)
+                    continue
+                if not stat.get("healthy", True):
+                    continue
+                healthy_workers.append(w)
 
             if not healthy_workers:
                 return None
 
             # 2. Filter candidates by capability
             capable_workers: List[ModelWorkerConfig] = []
-            has_any_discovered_caps = any(w.url.rstrip("/") in self._worker_caps for w in healthy_workers)
+            has_any_discovered_caps = any(_normalize_url(w.url) in self._worker_caps for w in healthy_workers)
 
             for w in healthy_workers:
-                clean_url = w.url.rstrip("/")
+                clean_url = _normalize_url(w.url)
                 cap = self._worker_caps.get(clean_url)
 
                 if cap is None:
@@ -290,7 +328,7 @@ class ModelDispatcher:
                 break
 
             worker, worker_url = selection
-            tried_urls.add(worker_url)
+            tried_urls.add(_normalize_url(worker_url))
             headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
 
             try:
@@ -352,7 +390,7 @@ class ModelDispatcher:
                 break
 
             worker, worker_url = selection
-            tried_urls.add(worker_url)
+            tried_urls.add(_normalize_url(worker_url))
             headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
 
             try:
