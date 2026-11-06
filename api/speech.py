@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import logging
 import time
 from datetime import datetime, timezone
@@ -23,11 +22,15 @@ from VoiceClonerAppServer.core.settings_manager import ClientApiKeyConfig, setti
 from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice, utc_now
 from VoiceClonerAppServer.models.schemas import PreviewSpeechRequest, SynthesisRequest
 from VoiceClonerAppServer.services.cache_service import cache_service
+from VoiceClonerAppServer.services.clone_reference import (
+    CloneReferenceUnavailable,
+    resolve_clone_reference,
+)
 from VoiceClonerAppServer.services.concurrency_limiter import user_concurrency_limiter
 from VoiceClonerAppServer.services.inflight_manager import inflight_manager
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 from VoiceClonerAppServer.services.usage_tracker import usage_tracker
-from VoiceClonerAppServer.services.voice_service import CLONED_VOICES_DIR, voice_service
+from VoiceClonerAppServer.services.voice_service import voice_service
 
 logger = logging.getLogger("VoiceClonerAppServer.SpeechAPI")
 
@@ -161,7 +164,7 @@ async def create_speech(
 
     # Step 0: Resolve voice and cloned embeddings & IDOR check (before cache or in-flight lookups)
     ref_npz_base64 = request.ref_npz_base64
-    ref_audio_path = request.ref_audio_path
+    db_clone_voice: Optional[Voice] = None
 
     stmt = select(Voice).where(Voice.id == voice_name)
     res = await db.execute(stmt)
@@ -170,13 +173,9 @@ async def create_speech(
     if db_voice and not db_voice.is_builtin:
         if db_voice.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="Không tìm thấy giọng nói.")
-
-        # Load precomputed .npz embedding if present
-        npz_file = CLONED_VOICES_DIR / f"{db_voice.id}.npz"
-        if npz_file.exists():
-            ref_npz_base64 = base64.b64encode(npz_file.read_bytes()).decode("utf-8")
-        elif db_voice.ref_audio_path:
-            ref_audio_path = db_voice.ref_audio_path
+        db_clone_voice = db_voice
+        # The embedding is resolved lazily after the cache checks, so a cached
+        # recording still plays when a legacy clone has no .npz on disk.
 
     # Step 1: Standard Audio Cache Check (deterministic SHA-256 excluding speed/pitch for player-side tuning)
     cache_key = cache_service.get_cache_key(
@@ -415,6 +414,16 @@ async def create_speech(
 
     try:
         async def _execute_synthesis():
+            ref_b64 = ref_npz_base64
+            if db_clone_voice is not None:
+                try:
+                    ref_b64 = await resolve_clone_reference(
+                        db_clone_voice.id, db_clone_voice.ref_audio_path
+                    )
+                except CloneReferenceUnavailable as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+                    )
             async with user_concurrency_limiter.acquire(
                 current_user.id,
                 max_concurrent=user_concurrent,
@@ -429,8 +438,8 @@ async def create_speech(
                     denoise=request.denoise,
                     smart_pause=request.smart_pause,
                     response_format=response_format,
-                    ref_audio_path=ref_audio_path,
-                    ref_npz_base64=ref_npz_base64,
+                    ref_audio_path=None,
+                    ref_npz_base64=ref_b64,
                 )
 
         synth_task = asyncio.create_task(_execute_synthesis())
@@ -579,7 +588,7 @@ async def preview_voice(
         sample_text = builtin.sample_text
 
     ref_npz_base64 = None
-    ref_audio_path = None
+    db_voice: Optional[Voice] = None
 
     if not builtin:
         # Check custom voice in DB
@@ -595,11 +604,8 @@ async def preview_voice(
         if not sample_text:
             sample_text = db_voice.sample_text or "Xin chào, đây là bản nghe thử giọng nói."
 
-        npz_file = CLONED_VOICES_DIR / f"{db_voice.id}.npz"
-        if npz_file.exists():
-            ref_npz_base64 = base64.b64encode(npz_file.read_bytes()).decode("utf-8")
-        elif db_voice.ref_audio_path:
-            ref_audio_path = db_voice.ref_audio_path
+        # Embedding resolution happens after the cache lookup below so cached
+        # previews keep working for legacy clones without a stored .npz.
 
     if not sample_text:
         sample_text = "Xin chào! Đây là bản nghe thử được kết xuất trực tiếp bằng công nghệ AI Neural 48kHz."
@@ -669,6 +675,13 @@ async def preview_voice(
         }
         return Response(content=wav_bytes, media_type="audio/wav", headers=headers)
 
+    # Resolve the clone embedding only on cache miss (never a server-local path).
+    if db_voice is not None and not db_voice.is_builtin:
+        try:
+            ref_npz_base64 = await resolve_clone_reference(db_voice.id, db_voice.ref_audio_path)
+        except CloneReferenceUnavailable as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
     # 4. Cache MISS: Deduct daily quota atomically
     if not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
         raise HTTPException(
@@ -690,7 +703,7 @@ async def preview_voice(
                 pitch=request.pitch or 0,
                 emotion=request.emotion or 85,
                 response_format="wav",
-                ref_audio_path=ref_audio_path,
+                ref_audio_path=None,
                 ref_npz_base64=ref_npz_base64,
             )
         duration_ms = (time.perf_counter() - t0) * 1000.0
