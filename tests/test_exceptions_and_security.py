@@ -304,7 +304,8 @@ def test_clone_fails_cleanly_when_embedding_extraction_fails(monkeypatch):
     assert client.get("/v1/voices", headers=headers).json()["cloned_count"] == 0
 
 
-def test_management_unauthorized_access():    # Without header
+def test_management_unauthorized_access():
+    # Without header
     res1 = client.get("/v1/management/settings")
     assert res1.status_code == 401
 

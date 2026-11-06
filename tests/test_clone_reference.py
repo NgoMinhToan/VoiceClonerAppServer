@@ -169,3 +169,119 @@ def test_create_speech_backfills_missing_npz(monkeypatch):
         assert npz_path.exists()
     finally:
         npz_path.unlink(missing_ok=True)
+
+
+def _run_db(coro_fn):
+    return asyncio.run(coro_fn())
+
+
+def _insert_builtin_voice_row(voice_id: str, sample_text: str):
+    from VoiceClonerAppServer.core.database import AsyncSessionLocal
+    from VoiceClonerAppServer.models.db_models import Voice
+
+    async def _do():
+        await init_db()
+        async with AsyncSessionLocal() as session:
+            session.add(Voice(
+                id=voice_id,
+                user_id=None,
+                name="DB Preset Voice",
+                sample_text=sample_text,
+                is_builtin=True,
+                ref_audio_path=None,
+            ))
+            await session.commit()
+
+    _run_db(_do)
+
+
+def _delete_voice_row(voice_id: str):
+    from sqlalchemy import delete
+
+    from VoiceClonerAppServer.core.database import AsyncSessionLocal
+    from VoiceClonerAppServer.models.db_models import Voice
+
+    async def _do():
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(Voice).where(Voice.id == voice_id))
+            await session.commit()
+
+    _run_db(_do)
+
+
+def test_preview_db_builtin_row_synthesizes_without_embedding(monkeypatch):
+    from fastapi.testclient import TestClient
+    from VoiceClonerAppServer.main import app
+    from VoiceClonerAppServer.services import model_dispatcher
+
+    api = TestClient(app, headers=API_HEADERS)
+    headers = _register(api)
+    voice_id = f"db_preset_{uuid.uuid4().hex[:8]}"
+    _insert_builtin_voice_row(voice_id, "Xin chào từ DB preset")
+
+    captured = {}
+
+    async def mock_synth(**kwargs):
+        captured.update(kwargs)
+        return b"RIFFfakeWAVaudio48k", 0.05, "mock-worker"
+
+    async def fail_extract(*args, **kwargs):
+        raise AssertionError("a builtin DB row must not resolve a clone embedding")
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", mock_synth)
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "extract_embedding", fail_extract)
+
+    try:
+        res = api.post("/v1/voices/preview", headers=headers, json={
+            "voice_id": voice_id, "text": "Xin chào",
+        })
+        assert res.status_code == 200
+        assert captured["ref_npz_base64"] is None
+        assert captured["ref_audio_path"] is None
+    finally:
+        _delete_voice_row(voice_id)
+
+
+def test_preview_cache_hit_serves_clone_without_npz(monkeypatch):
+    from fastapi.testclient import TestClient
+    from VoiceClonerAppServer.main import app
+    from VoiceClonerAppServer.services import model_dispatcher
+    from VoiceClonerAppServer.services.cache_service import cache_service
+
+    api = TestClient(app, headers=API_HEADERS)
+    headers = _register(api)
+
+    async def success_extract(audio_bytes, filename="sample.wav"):
+        return _npz_bytes()
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "extract_embedding", success_extract)
+    voice_id = _clone(api, headers)
+    npz_path = CLONED_VOICES_DIR / f"{voice_id}.npz"
+    npz_path.unlink()
+
+    sample_text = api.get(f"/v1/voices/{voice_id}", headers=headers).json()["sample_text"]
+    cache_key = cache_service.get_cache_key(
+        voice_id=f"preview_{voice_id}",
+        text=sample_text,
+        smart_pause=True,
+        sample_rate=48000,
+    )
+    cache_service.save_cache(cache_key, b"RIFF" + b"\x00" * 120)
+    cached_file = cache_service.get_cached_file(cache_key)
+
+    async def fail_worker(*args, **kwargs):
+        raise AssertionError("a cache hit must not call any worker")
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "synthesize", fail_worker)
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "extract_embedding", fail_worker)
+
+    try:
+        res = api.post("/v1/voices/preview", headers=headers, json={
+            "voice_id": voice_id, "text": sample_text,
+        })
+        assert res.status_code == 200
+        assert res.headers["X-Cache-Status"] == "HIT"
+    finally:
+        if cached_file is not None:
+            cached_file.unlink(missing_ok=True)
+        npz_path.unlink(missing_ok=True)

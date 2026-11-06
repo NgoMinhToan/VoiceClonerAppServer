@@ -151,3 +151,26 @@ async def test_start_and_stop_health_monitor_is_idempotent(two_workers):
     await dispatcher.start_health_monitor(interval_sec=60)
     await dispatcher.stop_health_monitor()
     await dispatcher.stop_health_monitor()
+
+
+def test_http_client_has_short_connect_timeout(two_workers):
+    dispatcher = two_workers
+    client = dispatcher._get_http_client()
+
+    assert client.timeout.connect == 10.0
+    assert client.timeout.read == 300.0
+
+
+@pytest.mark.asyncio
+async def test_synthesize_uses_short_connect_timeout(two_workers, monkeypatch):
+    dispatcher = two_workers
+    captured = {}
+
+    async def mock_post(url, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return httpx.Response(200, content=b"RIFFok", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(dispatcher._get_http_client(), "post", mock_post)
+
+    await dispatcher.synthesize(text="Xin chao", voice="v1")
+    assert captured["timeout"].connect == 10.0

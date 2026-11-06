@@ -18,6 +18,13 @@ logger = logging.getLogger("VoiceClonerAppServer.ModelDispatcher")
 
 CIRCUIT_FAILURE_THRESHOLD = 3
 CIRCUIT_COOLDOWN_SEC = 30.0
+# Read timeouts stay long (TTS jobs are slow), but a dead host must fail fast:
+# a blackholed SYN would otherwise hang an attempt for the full read timeout.
+CONNECT_TIMEOUT_SEC = 10.0
+
+
+def _request_timeout(read_timeout: float) -> httpx.Timeout:
+    return httpx.Timeout(read_timeout, connect=CONNECT_TIMEOUT_SEC)
 
 
 class WorkerInputError(RuntimeError):
@@ -57,7 +64,7 @@ class ModelDispatcher:
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
             limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
-            self._http_client = httpx.AsyncClient(limits=limits, timeout=300.0)
+            self._http_client = httpx.AsyncClient(limits=limits, timeout=_request_timeout(300.0))
         return self._http_client
 
     def _get_worker_stat(self, url: str) -> Dict[str, Any]:
@@ -434,7 +441,7 @@ class ModelDispatcher:
                     f"{worker_url}/internal/v1/synthesize",
                     json=payload,
                     headers=headers,
-                    timeout=300.0,
+                    timeout=_request_timeout(300.0),
                 )
                 if resp.status_code == 200:
                     self._record_success(worker_url)
@@ -500,7 +507,7 @@ class ModelDispatcher:
                     f"{worker_url}/internal/v1/embed",
                     files=files,
                     headers=headers,
-                    timeout=60.0,
+                    timeout=_request_timeout(60.0),
                 )
                 if resp.status_code == 200:
                     self._record_success(worker_url)
