@@ -274,8 +274,37 @@ def test_clone_voice_empty_file_rejected():
     assert "trống" in res.json()["detail"].lower()
 
 
-def test_management_unauthorized_access():
-    # Without header
+def test_clone_fails_cleanly_when_embedding_extraction_fails(monkeypatch):
+    from VoiceClonerAppServer.services.voice_service import CLONED_VOICES_DIR
+
+    async def mock_extract(audio_bytes, filename="sample.wav"):
+        raise RuntimeError("No upstream workers available for cloning embedding extraction")
+
+    monkeypatch.setattr(model_dispatcher.model_dispatcher, "extract_embedding", mock_extract)
+
+    user_res = client.post(
+        "/v1/auth/register",
+        json={"email": f"embed_fail_{uuid.uuid4().hex[:8]}@example.com", "password": "password123", "full_name": "Embed Fail"}
+    )
+    token = user_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    before = set(p.name for p in CLONED_VOICES_DIR.glob("*"))
+    res = client.post(
+        "/v1/voices/clone",
+        headers=headers,
+        files={"audio_file": ("sample.wav", b"RIFF" + b"\x00" * 40, "audio/wav")},
+        data={"name": "Broken Clone"}
+    )
+    after = set(p.name for p in CLONED_VOICES_DIR.glob("*"))
+
+    assert res.status_code == 502
+    assert "trích xuất đặc trưng" in res.json()["detail"]
+    assert after == before
+    assert client.get("/v1/voices", headers=headers).json()["cloned_count"] == 0
+
+
+def test_management_unauthorized_access():    # Without header
     res1 = client.get("/v1/management/settings")
     assert res1.status_code == 401
 

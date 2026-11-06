@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -208,14 +208,19 @@ async def clone_voice(
 
     saved_path.write_bytes(content)
 
-    # 4. Extract speaker embedding via upstream worker
+    # 4. Extract speaker embedding via upstream worker (required for a usable clone)
     try:
         npz_bytes = await model_dispatcher.extract_embedding(content, filename=saved_audio_filename)
         saved_npz_path.write_bytes(npz_bytes)
         logger.info(f"Speaker embedding extracted and saved to: {saved_npz_path}")
     except Exception as e:
         logger.error(f"Error extracting embedding for {voice_id}: {e}")
-        # Even if remote extraction fails, we can still proceed with ref_audio_path
+        saved_path.unlink(missing_ok=True)
+        saved_npz_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Không thể trích xuất đặc trưng giọng nói từ mẫu âm thanh. Vui lòng thử lại sau.",
+        )
 
     # 5. Insert Voice record into DB
     voice_record = Voice(
