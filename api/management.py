@@ -125,12 +125,15 @@ async def list_workers():
 
     async def _ping_worker(worker):
         ping = await model_dispatcher.ping_worker(worker.url, worker.api_key)
+        health = model_dispatcher.get_worker_health(worker.url)
         return {
             "id": worker.id,
             "url": worker.url,
             "api_key_masked": worker.api_key[:4] + "****" if len(worker.api_key) > 4 else ("set" if worker.api_key else "none"),
             "max_concurrent": worker.max_concurrent,
             "is_active": worker.is_active,
+            "routing_healthy": health["healthy"],
+            "circuit_state": health["circuit_state"],
             "telemetry": ping,
         }
 

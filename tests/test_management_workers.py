@@ -68,6 +68,35 @@ async def test_worker_management_api_crud():
                 settings_manager.update_settings({"model_workers": cleaned})
 
 @pytest.mark.asyncio
+async def test_worker_list_exposes_routing_health():
+    from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
+
+    transport = ASGITransport(app=app)
+    headers = {"X-Management-Key": "vc_admin_secret_key_123"}
+    worker_id = "test-worker-health-1"
+    snapshot = {k: dict(v) for k, v in model_dispatcher._worker_stats.items()}
+
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        try:
+            await ac.post("/v1/management/workers", headers=headers, json={
+                "id": worker_id, "url": "http://127.0.0.1:8009/",
+                "api_key": "secret", "max_concurrent": 2, "is_active": True,
+            })
+            res = await ac.get("/v1/management/workers", headers=headers)
+            assert res.status_code == 200
+            target = next(w for w in res.json() if w["id"] == worker_id)
+            assert target["routing_healthy"] is False
+            assert target["circuit_state"] == "closed"
+        finally:
+            settings = settings_manager.get_settings()
+            cleaned = [w.model_dump() for w in settings.model_workers if w.id != worker_id]
+            if len(cleaned) != len(settings.model_workers):
+                settings_manager.update_settings({"model_workers": cleaned})
+            model_dispatcher._worker_stats.clear()
+            model_dispatcher._worker_stats.update(snapshot)
+
+
+@pytest.mark.asyncio
 async def test_cache_purge_api():
     transport = ASGITransport(app=app)
     headers = {"X-Management-Key": "vc_admin_secret_key_123"}

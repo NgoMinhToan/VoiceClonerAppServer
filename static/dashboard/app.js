@@ -2272,6 +2272,7 @@ async function fetchWorkers() {
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-${statusColor}-500/10 text-${statusColor}-400 border border-${statusColor}-500/20">
                   ${isOnline ? 'Online' : 'Offline'} • ${latencyStr}
                 </span>
+                ${w.routing_healthy === false ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">Routing: Excluded</span>' : ''}
                 <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">Max: ${w.max_concurrent || 2} luồng</span>
               </div>
               <span class="text-xs text-slate-400 font-mono mt-0.5 block">${w.url}</span>

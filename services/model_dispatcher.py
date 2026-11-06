@@ -260,6 +260,7 @@ class ModelDispatcher:
             latency_ms = (time.perf_counter() - t0) * 1000.0
             if res.status_code == 200:
                 data = res.json()
+                self.mark_worker_health(clean_url, True)
                 cap = self.get_worker_capabilities(url)
                 return {
                     "status": "online",
@@ -270,9 +271,11 @@ class ModelDispatcher:
                     "supported_voices_count": len(cap.supported_voices) if cap else data.get("total_voices", 0),
                     "supports_cloning": cap.supports_cloning if cap else True,
                 }
+            self.mark_worker_health(clean_url, False, f"HTTP {res.status_code}")
             return {"status": "error", "code": res.status_code, "detail": res.text[:100]}
         except Exception as e:
             latency_ms = (time.perf_counter() - t0) * 1000.0
+            self.mark_worker_health(clean_url, False, str(e))
             return {"status": "offline", "latency_ms": round(latency_ms, 2), "error": str(e)}
 
     async def probe_all_workers(
