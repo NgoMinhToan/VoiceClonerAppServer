@@ -20,6 +20,10 @@ CIRCUIT_FAILURE_THRESHOLD = 3
 CIRCUIT_COOLDOWN_SEC = 30.0
 
 
+class WorkerInputError(RuntimeError):
+    """Upstream rejected the request itself (4xx); not a worker fault."""
+
+
 def _normalize_url(url: str) -> str:
     """Canonical worker URL used as the key for every per-worker stat map."""
     return (url or "").strip().rstrip("/")
@@ -436,16 +440,20 @@ class ModelDispatcher:
                     self._record_success(worker_url)
                     return resp.content, time.perf_counter() - t0, worker.id
 
-                self._record_failure(worker_url)
                 if resp.status_code >= 500:
+                    self._record_failure(worker_url)
                     logger.warning(
                         f"Worker {worker.id} ({worker_url}) returned HTTP {resp.status_code}. Attempt {attempt + 1}/{max_attempts}."
                     )
                     last_error = RuntimeError(f"Worker {worker.id} returned status {resp.status_code}: {resp.text}")
                     continue
-                else:
-                    raise RuntimeError(f"Worker {worker.id} returned status {resp.status_code}: {resp.text}")
 
+                # 4xx means the request itself was rejected: retrying elsewhere
+                # will not help, and the worker must not be blamed for it.
+                raise WorkerInputError(f"Worker {worker.id} returned status {resp.status_code}: {resp.text}")
+
+            except WorkerInputError:
+                raise
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError) as net_err:
                 self._record_failure(worker_url)
                 logger.warning(
@@ -498,16 +506,18 @@ class ModelDispatcher:
                     self._record_success(worker_url)
                     return resp.content
 
-                self._record_failure(worker_url)
                 if resp.status_code >= 500:
+                    self._record_failure(worker_url)
                     logger.warning(
                         f"Worker {worker.id} embed returned HTTP {resp.status_code}. Attempt {attempt + 1}/{max_attempts}."
                     )
                     last_error = RuntimeError(f"Worker {worker.id} embed returned status {resp.status_code}: {resp.text}")
                     continue
-                else:
-                    raise RuntimeError(f"Worker {worker.id} embed returned status {resp.status_code}: {resp.text}")
 
+                raise WorkerInputError(f"Worker {worker.id} embed returned status {resp.status_code}: {resp.text}")
+
+            except WorkerInputError:
+                raise
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError) as net_err:
                 self._record_failure(worker_url)
                 logger.warning(

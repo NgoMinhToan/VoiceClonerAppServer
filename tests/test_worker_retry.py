@@ -117,3 +117,50 @@ async def test_extract_embedding_raises_when_no_workers():
             await dispatcher.extract_embedding(audio_bytes=b"RIFFtestaudio")
     finally:
         settings_manager.update_settings({"model_workers": [w.model_dump() for w in original_workers]})
+
+
+@pytest.mark.asyncio
+async def test_synthesize_4xx_does_not_strike_worker(two_workers, monkeypatch):
+    dispatcher = two_workers
+
+    async def mock_post(url, **kwargs):
+        return httpx.Response(400, text="invalid reference", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(dispatcher._get_http_client(), "post", mock_post)
+
+    with pytest.raises(RuntimeError, match="returned status 400"):
+        await dispatcher.synthesize(text="Xin chao", voice="v1")
+
+    health = dispatcher.get_worker_health("http://worker-1:8001")
+    assert health["consecutive_failures"] == 0
+    assert health["healthy"] is True
+
+
+@pytest.mark.asyncio
+async def test_synthesize_5xx_strikes_worker(two_workers, monkeypatch):
+    dispatcher = two_workers
+
+    async def mock_post(url, **kwargs):
+        return httpx.Response(503, text="engine down", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(dispatcher._get_http_client(), "post", mock_post)
+
+    with pytest.raises(RuntimeError):
+        await dispatcher.synthesize(text="Xin chao", voice="v1")
+
+    assert dispatcher.get_worker_health("http://worker-1:8001")["consecutive_failures"] == 1
+
+
+@pytest.mark.asyncio
+async def test_extract_embedding_4xx_does_not_strike_worker(two_workers, monkeypatch):
+    dispatcher = two_workers
+
+    async def mock_post(url, **kwargs):
+        return httpx.Response(400, text="invalid audio", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(dispatcher._get_http_client(), "post", mock_post)
+
+    with pytest.raises(RuntimeError):
+        await dispatcher.extract_embedding(audio_bytes=b"RIFFtest")
+
+    assert dispatcher.get_worker_health("http://worker-1:8001")["consecutive_failures"] == 0
