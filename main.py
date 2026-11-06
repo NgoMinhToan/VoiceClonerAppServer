@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -67,9 +68,14 @@ async def lifespan(app: FastAPI):
     # Register dynamic hook when workers or settings are updated
     settings_manager.register_on_change(lambda _: asyncio.create_task(voice_service.discover_all_workers()))
 
+    # Continuously probe worker health so dead nodes stop receiving traffic,
+    # and re-discover capabilities when a node comes back.
+    await model_dispatcher.start_health_monitor(on_recovery=voice_service.discover_all_workers)
+
     yield
     print("\n[VoiceClonerAppServer draining connections and shutting down...]\n")
     logger.info("Draining connections and shutting down VoiceClonerAppServer...")
+    await model_dispatcher.stop_health_monitor()
     await model_dispatcher.aclose()
     await redis_client.aclose()
 

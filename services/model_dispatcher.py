@@ -1,10 +1,12 @@
 import asyncio
+import contextlib
 import io
 import logging
+import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import httpx
 import numpy as np
@@ -46,6 +48,7 @@ class ModelDispatcher:
         self._worker_caps: Dict[str, WorkerCapability] = {}
         self._http_client: Optional[httpx.AsyncClient] = None
         self._round_robin_idx: int = 0
+        self._health_task: Optional[asyncio.Task] = None
 
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -271,6 +274,94 @@ class ModelDispatcher:
         except Exception as e:
             latency_ms = (time.perf_counter() - t0) * 1000.0
             return {"status": "offline", "latency_ms": round(latency_ms, 2), "error": str(e)}
+
+    async def probe_all_workers(
+        self,
+        timeout: float = 3.0,
+        on_recovery: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> Dict[str, bool]:
+        """Probe every active worker's health endpoint and update routing health."""
+        settings = settings_manager.get_settings()
+        workers = [w for w in settings.model_workers if w.is_active]
+        if not workers:
+            return {}
+
+        client = self._get_http_client()
+
+        async def _probe(worker: ModelWorkerConfig) -> Tuple[str, bool, Optional[str]]:
+            clean_url = _normalize_url(worker.url)
+            headers = {"X-API-Key": worker.api_key} if worker.api_key else {}
+            try:
+                res = await client.get(
+                    f"{clean_url}/internal/v1/health", headers=headers, timeout=timeout
+                )
+                if res.status_code == 200:
+                    return clean_url, True, None
+                return clean_url, False, f"HTTP {res.status_code}"
+            except Exception as e:
+                return clean_url, False, str(e)
+
+        results = await asyncio.gather(*[_probe(w) for w in workers])
+
+        recovered: List[str] = []
+        outcome: Dict[str, bool] = {}
+        for url, healthy, error in results:
+            previous = self.get_worker_health(url)["healthy"]
+            self.mark_worker_health(url, healthy, error)
+            outcome[url] = healthy
+            if healthy and not previous:
+                recovered.append(url)
+
+        if recovered:
+            logger.info(f"Worker(s) recovered and eligible for routing again: {', '.join(recovered)}")
+            if on_recovery is not None:
+                try:
+                    await on_recovery()
+                except Exception as e:
+                    logger.error(f"Worker recovery callback failed: {e}")
+
+        return outcome
+
+    async def _health_loop(
+        self,
+        interval: float,
+        timeout: float,
+        on_recovery: Optional[Callable[[], Awaitable[None]]],
+    ) -> None:
+        while True:
+            try:
+                await self.probe_all_workers(timeout=timeout, on_recovery=on_recovery)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Worker health probe cycle failed")
+            await asyncio.sleep(interval)
+
+    async def start_health_monitor(
+        self,
+        interval_sec: Optional[float] = None,
+        on_recovery: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> None:
+        if self._health_task is not None and not self._health_task.done():
+            return
+        interval = (
+            interval_sec
+            if interval_sec is not None
+            else float(os.getenv("WORKER_HEALTH_INTERVAL_SEC", "15"))
+        )
+        timeout = float(os.getenv("WORKER_HEALTH_TIMEOUT_SEC", "3"))
+        self._health_task = asyncio.create_task(self._health_loop(interval, timeout, on_recovery))
+        logger.info(f"Worker health monitor started (interval={interval}s, timeout={timeout}s)")
+
+    async def stop_health_monitor(self) -> None:
+        task = self._health_task
+        if task is None:
+            return
+        self._health_task = None
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        logger.info("Worker health monitor stopped")
 
     async def synthesize(
         self,

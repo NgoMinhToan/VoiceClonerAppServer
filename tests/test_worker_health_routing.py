@@ -87,3 +87,67 @@ def test_trailing_slash_url_health_is_honored():
         assert dispatcher._select_worker(voice_id="v1") is None
     finally:
         settings_manager.update_settings({"model_workers": [w.model_dump() for w in original]})
+
+
+@pytest.mark.asyncio
+async def test_probe_marks_unreachable_worker_unhealthy(two_workers, monkeypatch):
+    dispatcher = two_workers
+
+    async def mock_get(url, **kwargs):
+        request = httpx.Request("GET", url)
+        if "worker-1" in str(url):
+            return httpx.Response(200, json={"status": "healthy"}, request=request)
+        raise httpx.ConnectError("refused", request=request)
+
+    monkeypatch.setattr(dispatcher._get_http_client(), "get", mock_get)
+    try:
+        results = await dispatcher.probe_all_workers()
+        assert results["http://worker-1:8001"] is True
+        assert results["http://worker-2:8002"] is False
+        assert dispatcher.get_worker_health("http://worker-2:8002")["healthy"] is False
+    finally:
+        await dispatcher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_probe_invokes_recovery_callback_once_on_recovery(two_workers, monkeypatch):
+    dispatcher = two_workers
+    calls = []
+    state = {"up": False}
+
+    async def callback():
+        calls.append(1)
+
+    async def mock_get(url, **kwargs):
+        request = httpx.Request("GET", url)
+        if not state["up"]:
+            raise httpx.ConnectError("refused", request=request)
+        return httpx.Response(200, json={"status": "healthy"}, request=request)
+
+    monkeypatch.setattr(dispatcher._get_http_client(), "get", mock_get)
+    try:
+        await dispatcher.probe_all_workers(on_recovery=callback)
+        assert calls == []
+
+        state["up"] = True
+        await dispatcher.probe_all_workers(on_recovery=callback)
+        assert calls == [1]
+
+        await dispatcher.probe_all_workers(on_recovery=callback)
+        assert calls == [1]
+    finally:
+        await dispatcher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_start_and_stop_health_monitor_is_idempotent(two_workers):
+    dispatcher = two_workers
+
+    async def noop_probe(*args, **kwargs):
+        return {}
+
+    dispatcher.probe_all_workers = noop_probe
+    await dispatcher.start_health_monitor(interval_sec=60)
+    await dispatcher.start_health_monitor(interval_sec=60)
+    await dispatcher.stop_health_monitor()
+    await dispatcher.stop_health_monitor()
