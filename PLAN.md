@@ -46,10 +46,14 @@
 2. **Capability / Voice-Aware Least-Active Load Balancer**:
    - Khi client gọi `POST /v1/audio/speech` với `voice="quynh_anh"`:
      - Gateway lọc danh sách các worker đang online và mạch `closed`/`half-open`.
+     - Worker có mạch `closed` nhưng cờ `healthy=False` (probe thất bại) bị loại khỏi ứng viên; worker `open` vẫn được phép chuyển `half-open` sau cooldown để tự phục hồi.
      - Lọc tiếp các worker có khai báo hỗ trợ giọng `quynh_anh` trong `supported_voices`.
      - Trong số các worker thỏa mãn năng lực trên, chọn worker có số lượng `active_jobs` thấp nhất. Nếu có nhiều worker hòa điểm, áp dụng xoay vòng round-robin.
    - Khi client gọi nhân bản giọng (`/v1/voices/clone` hoặc tổng hợp với `ref_npz_base64`):
      - Lọc các worker có cờ `supports_cloning=True`.
+   - **Sức khỏe worker**: `ModelDispatcher` probe `/internal/v1/health` định kỳ (`WORKER_HEALTH_INTERVAL_SEC`, mặc định 15s) và khi Dashboard ping. Khi một worker phục hồi, gateway chạy lại `discover_all_workers()` để cập nhật danh mục giọng.
+   - **Chính sách lỗi**: chỉ `5xx` và lỗi mạng mới tính là lỗi worker; `4xx` là lỗi đầu vào (không tăng bộ đếm circuit breaker, không retry sang worker khác).
+   - **Tham chiếu giọng clone**: gateway không bao giờ gửi đường dẫn file nội bộ (`ref_audio_path`) sang worker. `resolve_clone_reference()` trả `.npz` dạng Base64, tự trích xuất lại từ file WAV đã lưu nếu thiếu, và chạy sau bước kiểm tra audio cache để bản ghi cache vẫn phát được.
 
 ---
 
@@ -175,7 +179,10 @@ Toàn bộ **75/75 test cases** trong `VoiceClonerAppServer/tests/` đã đượ
 - `test_auth_and_voices_e2e.py` (5 tests vòng đời người dùng, auth me, Android contract).
 - `test_settings_and_3tier_auth.py` (12 tests cấu hình 3-tier, hot reload, per-user limits).
 - `test_management_users_and_pna.py` (5 tests quản trị tài khoản, PNA headers).
-- `test_management_workers.py` (2 tests quản trị worker, cache purge).
+- `test_management_workers.py` (3 tests quản trị worker, routing health, cache purge).
+- `test_worker_health_routing.py`: 9 tests cho cờ healthy, half-open sau cooldown, chuẩn hóa URL, probe định kỳ và callback phục hồi.
+- `test_worker_retry.py`: retry 5xx, retry lỗi mạng, không retry 4xx, 4xx không tính strike.
+- `test_clone_reference.py`: 4 unit tests cho `resolve_clone_reference` + 2 API tests (bỏ qua `ref_audio_path` của client, backfill `.npz` khi thiếu).
 - `test_speech_per_user_limits.py` (4 tests hạn mức per-user trên speech và preview).
 - `test_dashboard_ui.py`, `test_dashboard_metrics_extension.py`, `test_database_migration.py`, `test_docker_packaging.py`.
 

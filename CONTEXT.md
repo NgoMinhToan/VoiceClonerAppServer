@@ -11,7 +11,7 @@
 - **Port**: 8000
 - **Dynamic Configuration**: `config/settings.json` with instant runtime hot-reload via `settings_manager.py`.
 - **Security**: 3-tier API Keys (`X-Management-Key`, `X-API-Key: vc_live_...`, upstream worker keys) + User Bearer Tokens (`Authorization: Bearer <JWT>`).
-- **Load Balancing**: Dynamic Voice Discovery (`GET /internal/v1/voices`) and Capability / Voice-Aware Least-Active Load Balancer with round-robin tiebreaking.
+- **Load Balancing**: Dynamic Voice Discovery (`GET /internal/v1/voices`) and Capability / Voice-Aware Least-Active Load Balancer with round-robin tiebreaking. Routing skips workers whose health probe failed; a background probe runs every `WORKER_HEALTH_INTERVAL_SEC` (default 15s).
 - **Audio Caching**: Deterministic SHA-256 audio cache (`storage/audio_cache/`) delivering instant < 10ms responses with quota exemption.
 - **User Authentication**: Full JWT lifecycle (`/v1/auth/register`, `/v1/auth/login`, `/v1/auth/google`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/me`).
 - **Voice Cloning Management**: Multi-slot instant voice cloning (`/v1/voices/clone`) with IDOR protection.
@@ -38,6 +38,23 @@
 ---
 
 ## 3. Completed Work
+
+### Worker Health Routing & Clone Reference Fix (Nov 2026)
+- **Root causes fixed**:
+  - A worker that was unreachable looked *idle* (`active_jobs = 0`), so least-utilization routing preferred it; dashboard pings never affected routing state.
+  - Every 4xx (including a bad reference) incremented the failure counter twice and tripped the circuit breaker, cascading to `No capable workers available`.
+  - Cloning silently succeeded when embedding extraction failed, creating voices that could never synthesize.
+  - The gateway forwarded its own local `ref_audio_path` to workers on other hosts, producing `Error opening '.../cloned_xxx.wav': System error` and a 503.
+- **Dispatcher (`services/model_dispatcher.py`)**:
+  - Per-worker `healthy`, `last_error`, `last_probe_at` fields; `_worker_stats` keyed by normalized URL (`_normalize_url`).
+  - `mark_worker_health()` / `get_worker_health()` write health only — never the breaker counters; `_record_failure` still owns the 3-strike circuit.
+  - Selection: health gates only `closed` breakers, so `open` workers still half-open after the 30s cooldown and can self-heal.
+  - `probe_all_workers()` + lifespan-started monitor (`WORKER_HEALTH_INTERVAL_SEC`, `WORKER_HEALTH_TIMEOUT_SEC`), with `discover_all_workers()` re-run on recovery. Added the missing `import asyncio` in `main.py` that silently broke the hot-reload discovery hook.
+  - `WorkerInputError` separates 4xx input errors (no strike, no retry) from 5xx/network worker faults.
+  - Dashboard ping updates health; `GET /v1/management/workers` exposes `routing_healthy` and `circuit_state`; worker cards show `Routing: Excluded`.
+- **Cloning (`api/voices.py`)**: embedding extraction is mandatory — failure returns 502 and removes the orphan WAV/NPZ.
+- **Clone references (`services/clone_reference.py`, `api/speech.py`)**: `resolve_clone_reference()` always returns base64 `.npz`, backfills from the stored WAV (atomic write, per-voice lock), and runs only after cache misses so cached audio still serves legacy clones. Client-supplied `ref_audio_path` is ignored and never forwarded.
+- **Verification**: `pytest VoiceClonerAppServer/tests/ -q` → 112 passed.
 
 ### Per-Worker Concurrency Limits & Utilization-Based Load Balancing (Nov 2026)
 - **Per-Worker Capacity & Utilization Load Balancing**:

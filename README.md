@@ -43,6 +43,8 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Thời gian sống của Refresh Token (ngày) |
 | `GOOGLE_CLIENT_ID` | `""` | Google Web Client ID cho tính năng Google Sign-In |
 | `BUSINESS_TIMEZONE` | `Asia/Ho_Chi_Minh` | Múi giờ đặt lại hạn ngạch ký tự hàng ngày (00:00 nửa đêm) |
+| `WORKER_HEALTH_INTERVAL_SEC` | `15` | Chu kỳ probe `/internal/v1/health` của các worker đang bật (giây) |
+| `WORKER_HEALTH_TIMEOUT_SEC` | `3` | Timeout mỗi lần probe sức khỏe worker (giây) |
 
 ---
 
@@ -60,12 +62,12 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `GET /v1/voices`: Lấy danh mục giọng preset động được tổng hợp từ các upstream workers + các giọng clone riêng của user đăng nhập.
 - `GET /v1/voices/{voice_id}`: Chi tiết profile của một giọng nói (preset hoặc clone).
 - `GET /v1/voices/{voice_id}/audio`: Tải file âm thanh mẫu của giọng clone (bảo vệ IDOR).
-- `POST /v1/voices/clone`: Upload file âm thanh mẫu (3-15s) để nhân bản giọng đọc mới (tối đa 3 slots).
+- `POST /v1/voices/clone`: Upload file âm thanh mẫu (3-15s) để nhân bản giọng đọc mới (tối đa 3 slots). Trích xuất speaker embedding (`.npz`) là bắt buộc: nếu upstream worker không trích xuất được, API trả `502` và dọn sạch file tạm thay vì tạo giọng hỏng.
 - `PUT /v1/voices/{voice_id}`: Cập nhật tên, phong cách, cài đặt của giọng clone.
 - `DELETE /v1/voices/{voice_id}`: Xóa giọng clone và giải phóng slot quota.
 
 ### 4.3 Tổng Hợp Âm Thanh (`/v1/audio`) & Nghe Thử
-- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (bảo vệ IDOR cho cloned voice, Audio Cache SHA-256 < 5ms, In-Flight SingleFlight request deduplication, Unbilled Cache claim khi retry, kiểm tra và trừ quota hàng ngày, kiểm tra rate limit per-user, xếp hàng concurrency per-user, lọc worker theo voice capability, điều phối Least-Active, đồng bộ timeout 120s).
+- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (bảo vệ IDOR cho cloned voice, Audio Cache SHA-256 < 5ms, In-Flight SingleFlight request deduplication, Unbilled Cache claim khi retry, kiểm tra và trừ quota hàng ngày, kiểm tra rate limit per-user, xếp hàng concurrency per-user, lọc worker theo voice capability, loại worker unhealthy, điều phối Least-Active, đồng bộ timeout 120s). `ref_audio_path` do client gửi lên bị bỏ qua; giọng clone luôn được gửi sang worker dưới dạng `ref_npz_base64`.
 - `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng (hỗ trợ Audio Cache, giới hạn độ dài `max_preview_char_limit` của user, kiểm tra hạn mức còn lại, kiểm tra rate limit per-user, xếp hàng concurrency per-user, kiểm tra và trừ quota ký tự hàng ngày).
 
 ### 4.4 Trạng Thái Hệ Thống (`/v1/system`)
@@ -76,7 +78,7 @@ Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định 
 - `GET /dashboard`: Giao diện điều khiển Web AI Voice Gateway Console (Dark Obsidian Theme).
 - `GET/PUT /v1/management/settings`: Đọc và cập nhật cấu hình hệ thống (Hot-Reload).
 - `GET/POST/DELETE/PATCH /v1/management/keys`: Quản lý danh sách Client API Key.
-- `GET/POST/DELETE/PATCH /v1/management/workers`: Quản lý danh sách, thêm/xóa/bật/tắt và ping test đồng thời các worker inference.
+- `GET/POST/DELETE/PATCH /v1/management/workers`: Quản lý danh sách, thêm/xóa/bật/tắt và ping test đồng thời các worker inference. Mỗi item trả thêm `routing_healthy` và `circuit_state`; ping cập nhật trạng thái định tuyến nhưng không thay đổi bộ đếm circuit breaker.
 - `POST /v1/management/workers/test`: Ping kiểm tra địa chỉ worker bất kỳ.
 - `POST /v1/management/cache/purge`: Dọn dẹp toàn bộ tệp âm thanh WAV trong bộ đệm cache.
 - `GET /v1/management/metrics/summary`: Truy vấn tổng hợp số liệu lưu lượng, tỷ lệ cache, độ trễ và log sự kiện (hỗ trợ lọc theo `hours` và `key_name`).
