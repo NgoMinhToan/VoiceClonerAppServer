@@ -1,111 +1,79 @@
 # Project Context: VoiceClonerAppServer
 
-> **Important for Agents:** Keep this file up to date! Whenever you make a git commit in `VoiceClonerAppServer`, update this file to reflect the latest state, architecture modifications, completed tasks, and upcoming priorities.
+Current state of the gateway. Git history is the changelog.
 
----
+## 1. Role
 
-## 1. Project Summary
+Central API gateway and reverse proxy for the Voice Cloner platform. It terminates client authentication, enforces quotas and rate limits, caches audio, selects workers, and serves the management dashboard.
 
-`VoiceClonerAppServer` is the central API Gateway, Reverse Proxy, Quota Controller, and Management Console for the Voice Cloner platform.
+- Port: `8000`
+- Configuration: `config/settings.json`, hot-reloaded on modification
+- Persistence: PostgreSQL (SQLAlchemy async) with SQLite fallback; Redis for quotas, rate limits, and token revocation, with an in-memory fallback
 
-- **Port**: 8000
-- **Dynamic Configuration**: `config/settings.json` with instant runtime hot-reload via `settings_manager.py`.
-- **Security**: 3-tier API Keys (`X-Management-Key`, `X-API-Key: vc_live_...`, upstream worker keys) + User Bearer Tokens (`Authorization: Bearer <JWT>`).
-- **Load Balancing**: Dynamic Voice Discovery (`GET /internal/v1/voices`) and Capability / Voice-Aware Least-Active Load Balancer with round-robin tiebreaking. Routing skips workers whose health probe failed; a background probe runs every `WORKER_HEALTH_INTERVAL_SEC` (default 15s).
-- **Audio Caching**: Deterministic SHA-256 audio cache (`storage/audio_cache/`) delivering instant < 10ms responses with quota exemption.
-- **User Authentication**: Full JWT lifecycle (`/v1/auth/register`, `/v1/auth/login`, `/v1/auth/google`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/me`).
-- **Voice Cloning Management**: Multi-slot instant voice cloning (`/v1/voices/clone`) with IDOR protection.
-- **Management Dashboard**: Dark Obsidian Control Center (`/dashboard`) with Chart.js analytics and real-time telemetry.
+## 2. Modules
 
----
+| Module | Responsibility |
+| :--- | :--- |
+| `api/auth.py` | Registration, login, Google auth, refresh, logout, profile |
+| `api/voices.py` | Catalog, preview, cloning, update, delete, reference audio |
+| `api/speech.py` | Speech pipeline and preview pipeline |
+| `api/management.py` | Keys, workers, settings, users, metrics, cache purge |
+| `api/system.py` | Health and system status |
+| `core/security.py` | JWT dependencies, management key, client key |
+| `core/redis_client.py` | Daily quota, sliding-window rate limit, token blacklist |
+| `core/settings_manager.py` | Pydantic settings, disk watcher, change hooks |
+| `services/model_dispatcher.py` | Health state, breaker, capability filtering, utilization routing |
+| `services/voice_service.py` | Dynamic discovery and catalog aggregation |
+| `services/cache_service.py` | Standard and unbilled cache lifecycle |
+| `services/inflight_manager.py` | Singleflight tasks and claim locks |
+| `services/concurrency_limiter.py` | Per-user concurrency and queue |
+| `services/clone_reference.py` | Base64 `.npz` resolution and WAV backfill |
+| `services/usage_tracker.py` | Usage logs and dashboard analytics |
 
-## 2. Authentication, Quota & Concurrency Architecture
+## 3. Security and Limits
 
-- **Auth Providers**: Email/Password (bcrypt + JWT) and Google Sign-In (OAuth2 / Google ID tokens).
-- **Tokens**: Access token (15 mins), Refresh token (7 days). Token revocation backed by Redis blacklist.
-- **Daily Quotas & Limits**:
-  - Configurable Default User Limits (`default_user_limits` in `settings.json`): `max_cloned_slots` (3), `daily_tts_char_limit` (50,000), `rate_limit_requests_per_minute` (60), `max_speech_char_limit` (2,000), `max_preview_char_limit` (250), `max_concurrent_tts` (1), `max_queue_waiters` (1).
-  - Stamped directly onto database `User` records upon registration, allowing customized quotas per user.
-  - Per-Worker Concurrency (`model_workers` in `settings.json`): Each worker defines `max_concurrent` (1-64 streams, default 2) replacing legacy `weight`.
-  - Load Balancer: Capability-Aware Utilization-Based Load Balancer (`active_jobs / max_concurrent`) with per-worker capacity enforcement (skips workers at or over `max_concurrent`) and round-robin tiebreaking.
-  - Failover & Retry: Automatic 1x retry to an alternate capable worker on 5xx or connection/network errors (excluding failed worker via `exclude_urls`). Client 4xx errors fail immediately without retry. Fake fallback sine-wave audio and empty mock embeddings removed; requests fail with 503 if no workers available.
-  - Server Concurrency: Computed dynamically from active worker capacity (`sum(w.max_concurrent)`). Dead server-level fields `concurrency.max_concurrent_tts` and `concurrency.max_queue_waiters` removed.
-- **Concurrency**:
-  - TTS (`/v1/audio/speech`): Controlled by `tts_slot_guard` (asyncio.Semaphore, dynamic resizing) with queueing and client disconnect cancellation.
-  - Audio Cache HIT: Served in `< 10ms` from disk, quota-exempt.
-  - Audio Cache MISS: Atomic quota deduction, routed to upstream VieNeu-TTS workers, automated quota rollback on failure.
+- 3-tier keys plus user JWTs. All `/v1/*` client routes require an active client key; management routes require the management key; speech, preview, and clone require a user token.
+- Access tokens 15 minutes, refresh tokens 7 days; revoked tokens are blacklisted in Redis.
+- Default per-user limits: 3 cloned slots, 50,000 chars/day, 60 requests/minute, 2,000 chars per speech, 250 chars per preview, 1 concurrent stream, 1 queue waiter.
+- Limits are copied onto each user row at registration and editable per user through the dashboard or `PATCH /v1/management/users/{id}`.
+- Rate limiting uses a Cloudflare-style sliding-window counter with weighted previous-minute data.
 
----
+## 4. Speech Pipeline
 
-## 3. Completed Work
+- Step 0: voice resolution and clone ownership check happen before cache or quota work.
+- Standard cache: `storage/audio_cache/{sha256}.wav`, served under 10 ms, quota-exempt.
+- Unbilled cache: `unbilled_{sha256}.wav`, produced when the client disconnects; claimed and promoted on retry.
+- Singleflight: one worker job per cache key; waiters share an `asyncio.Future` without consuming concurrency slots.
+- Quota and rate limits are checked per user; failures roll back quota.
+- Client disconnect is detected by an active `receive()` watcher plus a `X-Client-Timeout` fallback; abandoned waiters return 499.
+- Cache key: `sha256(voice_id:normalized_text:smart_pause:48000hz)`. Speed and pitch are client-side.
 
-### Worker Health Routing & Clone Reference Fix (Nov 2026)
-- **Root causes fixed**:
-  - A worker that was unreachable looked *idle* (`active_jobs = 0`), so least-utilization routing preferred it; dashboard pings never affected routing state.
-  - Every 4xx (including a bad reference) incremented the failure counter twice and tripped the circuit breaker, cascading to `No capable workers available`.
-  - Cloning silently succeeded when embedding extraction failed, creating voices that could never synthesize.
-  - The gateway forwarded its own local `ref_audio_path` to workers on other hosts, producing `Error opening '.../cloned_xxx.wav': System error` and a 503.
-- **Dispatcher (`services/model_dispatcher.py`)**:
-  - Per-worker `healthy`, `last_error`, `last_probe_at` fields; `_worker_stats` keyed by normalized URL (`_normalize_url`).
-  - `mark_worker_health()` / `get_worker_health()` write health only — never the breaker counters; `_record_failure` still owns the 3-strike circuit.
-  - Selection: health gates only `closed` breakers, so `open` workers still half-open after the 30s cooldown and can self-heal.
-  - `probe_all_workers()` + lifespan-started monitor (`WORKER_HEALTH_INTERVAL_SEC`, `WORKER_HEALTH_TIMEOUT_SEC`), with `discover_all_workers()` re-run on recovery. Added the missing `import asyncio` in `main.py` that silently broke the hot-reload discovery hook.
-  - `WorkerInputError` separates 4xx input errors (no strike, no retry) from 5xx/network worker faults.
-  - Dashboard ping updates health; `GET /v1/management/workers` exposes `routing_healthy` and `circuit_state`; worker cards show `Routing: Excluded`.
-- **Cloning (`api/voices.py`)**: embedding extraction is mandatory — failure returns 502 and removes the orphan WAV/NPZ.
-- **Clone references (`services/clone_reference.py`, `api/speech.py`)**: `resolve_clone_reference()` always returns base64 `.npz`, backfills from the stored WAV (atomic write, per-voice lock), and runs only after cache misses so cached audio still serves legacy clones. Client-supplied `ref_audio_path` is ignored and never forwarded.
-- **Verification**: `pytest VoiceClonerAppServer/tests/ -q` → 112 passed.
+## 5. Worker Routing
 
-### Per-Worker Concurrency Limits & Utilization-Based Load Balancing (Nov 2026)
-- **Per-Worker Capacity & Utilization Load Balancing**:
-  - Replaced legacy `weight` with `max_concurrent` (1-64 streams, default 2) in `ModelWorkerConfig` and management endpoints (`/v1/management/workers`).
-  - Implemented utilization-ratio load balancing (`active_jobs / max_concurrent`) in `services/model_dispatcher.py` with automatic capacity gating (skips workers at full capacity) and round-robin tiebreaker.
-  - Implemented 1x automatic retry on 5xx or connection/network errors to an alternate capable worker node, with 4xx fast-fail.
-  - Removed dummy fallback audio (sine wave 220Hz) and zero-vector `.npz` embeddings; requests fail with 503 if no workers are reachable.
-  - Removed dead server-level fields `max_concurrent_tts` and `max_queue_waiters` from `concurrency` settings; server capacity is now dynamically computed from active worker limits.
-  - Updated Dashboard UI: Worker cards display `Max: N luồng`, worker modal provides max concurrent stream configuration, and server concurrency card displays read-only computed infrastructure capacity (`Total Active Streams` and `Active/Total Workers`).
-  - Added frontend unit test `test_dashboard_js_syntax_is_valid` in `tests/test_dashboard_ui.py` running Node.js syntax parsing to ensure static JS assets have zero syntax errors.
+- Discovery calls `GET /internal/v1/voices` on active workers at boot, on settings changes, and after a worker recovers.
+- Health probes run every 15 s (3 s timeout) and update `healthy` without changing breaker counters.
+- Open circuits are excluded until the 30 s cooldown; then half-open. Unhealthy closed workers are excluded.
+- Candidates must support the voice (or cloning) and have free capacity. Lowest utilization wins; ties round-robin.
+- One retry to a different capable worker on 5xx/network errors; `WorkerInputError` (4xx) fails fast with no strike.
+- Cloned voices are resolved to `ref_npz_base64` by `clone_reference.py`; the gateway never forwards `ref_audio_path`.
 
-### Upstream Worker & Concurrency Queue Timeout Alignment (Nov 2026)
-- **120s Timeout Synchronization**:
-  - Aligned upstream worker HTTP read timeout in `services/model_dispatcher.py` (`_get_http_client()`) from 60.0s to 120.0s.
-  - Aligned user concurrency waiting queue timeout in `services/concurrency_limiter.py` (`acquire(..., timeout_sec=120.0)`) from 60.0s to 120.0s.
-  - Added unit test `test_gateway_timeout_defaults_are_120_seconds` in `tests/test_concurrency_limiter.py` verifying both default timeouts are 120.0s, matching the Android client socket timeout for long audio synthesis.
+## 6. Dashboard
 
-### Exposure of Full Per-User Quotas & Limits in Client Auth APIs (Oct 2026)
-- **Profile & Auth Responses Synchronization**:
-  - Extended `UserProfileResponse` (`GET /v1/auth/me`) and `UserResponse` (`POST /v1/auth/register`, `/login`, `/google`) in `models/schemas.py` to return all user-specific quotas and limits:
-    - `daily_tts_char_limit` and `daily_tts_chars_limit` (backward-compatible aliases)
-    - `max_speech_char_limit` (maximum text length allowed per synthesis call)
-    - `max_preview_char_limit` (maximum text length allowed per sample preview)
-    - `rate_limit_requests_per_minute` (user-specific sliding window rate limit)
-    - `max_concurrent_tts` (maximum concurrent worker slots for user)
-    - `max_queue_waiters` (maximum queued synthesis jobs for user)
-  - Updated `api/auth.py` helper `build_user_response()` and `get_me()` to dynamically read values from database `User` records with graceful fallback to `default_user_limits`.
-  - Added end-to-end integration test coverage (`test_auth_me_reflects_updated_user_limits`, `test_user_registration_inherits_default_limits` in `test_auth_and_voices_e2e.py`). All 62/62 server unit tests passing with 100% success rate.
+- `/dashboard` is a 7-tab dark console: Overview, Analysis, Realtime, Request Events, Voice Workers, API Keys, Settings.
+- Metrics are backed by `api_usage_logs` and `/v1/management/metrics/{summary,analysis}`.
+- Calendar day bounds honor a client timezone offset; the activity heatmap maps requests to discrete time blocks.
 
-### Management Dashboard Revamp & Analysis Tab Integration (Oct 2026)
-- **Restoration of Specialized Analysis Tab (`#content-analysis`)**:
-  - Implemented 6 analytical visualization cards modeled after `cpa-usage-keeper`'s `AnalysisPanel.tsx`:
-    1. *Token / TTS Character Usage Over Time*: Mixed stacked bar (Input Chars `#2563eb`, Raw Inference Chars `#16a34a`, Cache Read Chars `#d97706`) + requests dashed line (`#ff5a40`) + estimated cost line (`#14b8a6`) on secondary Y-axis, complete with Total Tokens, Total Cost, Cost / 1M Chars KPI counters and average line reference.
-    2. *Usage Distribution*: Dimension switcher (API Key | Model Worker | User) with Doughnut chart and detailed ranked list displaying Cache Rate %, Requests, Cost, RPM, and TPM.
-    3. *Top Models*: Hourly stacked bar chart broken down by upstream VieNeu-TTS worker nodes with model performance metrics.
-    4. *Latency Diagnostics*: Scatter plot correlating request text length (`char_count`) with response latency (`latency_ms`) accompanied by p95 Latency threshold line, average latency, and sample counters.
-    5. *Model Speed & Efficiency*: End-to-end output speed (chars/sec) bar chart by worker and quadrant efficiency matrix.
-    6. *API Key & Models Heatmap*: 2D matrix table crossing Client API Keys with Worker Models, shaded with volume-based color gradients from Low to High.
-- **Calendar Day Bounds & Local Timezone Alignment**:
-  - Resolved timeline bug where "Today" previously used rolling `now - 24h`: `usage_tracker.py` now accepts `tz_offset_minutes` from the client browser and computes calendar day bounds starting strictly at `00:00:00` local time today through `23:59:59` (24 hourly buckets: `00:00`, `01:00`, ..., `23:00`).
-  - Added dedicated logic for "Yesterday" (yesterday's 24 hours with exact `since <= t < until` bounds), "7d" (7 daily buckets), and "30d" (30 daily buckets).
-- **Activity Heatmap Discrete 364-Block Mapping (Bugfix)**:
-  - Eliminated the whole-column smear bug where all 7 vertical cells in an hourly column lit up simultaneously: partitioned the time window into 364 discrete blocks (52 columns x 7 rows, ~3.95 minutes per cell). Requests are mapped directly to their individual block index based on exact timestamps, so only cells with active requests illuminate while inactive cells remain dark.
-  - Corrected fixed-position tooltip offset in `positionTooltip()` to prevent covering the cursor or target cell.
-  - Restored color status legend indicators by isolating `.legend-cell` from flex-scaling `.heat-cell` rules.
-  - Eliminated sparkline tooltip clipping by setting `overflow: visible` on `.k-sparkline-box` and removing `overflow: hidden` on `.k-card`.
-- **Dark Obsidian Aesthetics & Chart Card Stretching**:
-  - Fixed background color mismatch by replacing muddy espresso tones with authentic dark obsidian tokens: `#0f1013` (canvas/page), `#17181d` (cards), `#1f2127` (recessed sparklines/inputs), and `#262932` (borders).
-  - Restructured Chart.js canvas containers with `position: relative`, `width: 100%`, and `maintainAspectRatio: false`, allowing charts and sparklines to stretch 100% edge-to-edge inside their cards without awkward padding cutoffs.
-- **Responsive 7-Tab Dock Toolbar & Brand Normalization**:
-  - Desktop view (>= 1024px): Displays all 7 tabs (`Overview`, `Analysis`, `Realtime`, `Request Events`, `Voice Workers`, `API Keys`, `Settings`) as 1-click pill buttons with smooth active pill indicators.
-  - Mobile/Tablet view (< 1024px): Automatically collapses the navigation into a sleek "Switch page" dropdown button with an animated popup menu matching `cpa-usage-keeper`.
-  - Purged all mentions of `CLIProxyAPI` across HTML, CSS, JavaScript, and API route metadata, unifying under `VOICE CLONER - AI Voice Gateway Console`.
-- **Verification**: Updated `test_dashboard_ui.py` (asserting `tab-btn-analysis`, `chartTokenUsageAnalysis`, `CLIProxyAPI not in html`) and `test_dashboard_metrics_extension.py` (validating `analysis` payload and `/v1/management/metrics/analysis` route). Verified 49/49 unit tests passing with 100% success rate, verified in headless browser via Playwright across desktop and mobile viewports.
+## 7. Known Constraints and Gaps
+
+- Worker HTTP read timeout is 300 s; queue wait and Android read timeout are 120 s. Keep these aligned when changing clients.
+- Serials and voice names come from workers; the gateway keeps a cold-boot fallback catalog only.
+- The pre-push hook calls bare `python`; on Windows, run the suite with the root `.venv`.
+- Cross-cutting platform work is tracked in `PLAN.md`.
+
+## 8. Verification
+
+```bash
+pytest tests/ -v
+```
+
+Current suite: 116 tests across 20 modules. Run before every commit; the pre-push hook does the same.

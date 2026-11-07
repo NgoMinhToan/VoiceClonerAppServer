@@ -1,145 +1,186 @@
 # VoiceClonerAppServer
 
-API Gateway, Reverse Proxy & Quản trị Hệ thống Voice Cloner (Tích hợp Dynamic Voice Discovery, Capability-Aware Least-Active Load Balancer, User Authentication JWT, và Bảng điều khiển quản trị thời gian thực).
+API gateway, reverse proxy, quota controller, and management console for the Voice Cloner platform. It fronts any number of stateless TTS workers that implement the Voice API contract.
 
----
+- Port: `8000`
+- Stack: FastAPI, SQLAlchemy async (PostgreSQL with SQLite fallback), Redis with in-memory fallback
+- Dashboard: `http://localhost:8000/dashboard`
+- Swagger: `http://localhost:8000/docs`
 
-## 1. Tổng Quan Kiến Trúc Độc Lập
+## Architecture
 
-`VoiceClonerAppServer` được thiết kế hoàn toàn tách rời, không gắn cứng với bất kỳ model AI hay nhà cung cấp giọng đọc cụ thể nào:
-- **Chấp nhận mọi Voice Server tuân thủ chuẩn Voice API**: Gateway có thể kết nối tới [vienueTTS_server](https://github.com/NgoMinhToan/vienueTTS_server) hoặc bất kỳ cụm máy chủ giọng nói AI nào khác có cùng chuẩn API.
-- **Dynamic Voice Discovery**: Khi khởi động hoặc khi cấu hình worker thay đổi, Gateway tự động gửi request `GET /internal/v1/voices` tới toàn bộ các worker đang online, tự động phân tích và gộp danh mục giọng đọc mà không cần khai báo danh sách giọng thủ công trong code hay file cấu hình.
-- **Capability / Voice-Aware Least-Active Routing**: Thuật toán cân bằng tải thông minh không chỉ đếm số request đang xử lý (`active_jobs`) mà trước tiên lọc ra danh sách các worker **có hỗ trợ đúng `voice_id` được yêu cầu** (hoặc hỗ trợ clone). Sau đó, nó mới chọn worker ít việc nhất trong nhóm thỏa mãn năng lực (kèm cơ chế xoay vòng round-robin khi hòa điểm).
-- **Hệ thống xác thực người dùng đầy đủ (`/v1/auth/*`)**: Cung cấp API đăng ký, đăng nhập email/mật khẩu, đăng nhập Google OAuth2, cấp mới JWT access/refresh token, và hồ sơ người dùng (`/v1/auth/me`).
-- **Quản lý giọng nhân bản (Instant Voice Cloning `/v1/voices/clone`)**: Cho phép người dùng thu âm hoặc tải file mẫu để nhân bản giọng đọc, kiểm soát nghiêm ngặt hạn mức 3 slot clone/người dùng, lưu trữ tệp `.wav` và `.npz` speaker embedding.
-- **Tập trung cấu hình trong `config/settings.json`**: Mọi cài đặt cổng mạng, danh sách workers, giới hạn luồng (concurrency), bộ nhớ đệm âm thanh và danh sách Client API Keys đều được lưu trong file JSON và áp dụng ngay lập tức (Hot-Reload) mà không cần khởi động lại server.
-- **Giao diện quản trị hiện đại (Dark Obsidian Theme Console)**: Bảng điều khiển tại `/dashboard`, tích hợp 7 tab chức năng (`Overview`, `Analysis`, `Realtime`, `Request Events`, `Voice Workers`, `API Keys`, `Settings`), hỗ trợ rà chuột xem chỉ số chi tiết trên toàn bộ biểu đồ, sparklines và ma trận hoạt động (Activity Heatmaps & Request Health Timeline).
+```
+Client (Android / Web)
+        │  X-API-Key + Bearer JWT
+        ▼
+VoiceClonerAppServer ── dynamic voice discovery ──► workers
+        │  utilization + capability routing
+        ├── standard cache / unbilled cache
+        ├── singleflight request coalescing
+        └── PostgreSQL usage logs + Redis quotas
+```
 
+| Module | Responsibility |
+| :--- | :--- |
+| `api/auth.py` | Registration, login, Google sign-in, refresh, logout, profile |
+| `api/voices.py` | Dynamic catalog, preview, cloning, update, delete |
+| `api/speech.py` | Speech pipeline: quota, rate limit, cache, singleflight, routing |
+| `api/management.py` | Keys, workers, settings, users, metrics, cache purge |
+| `api/system.py` | Health and system status |
+| `services/model_dispatcher.py` | Health probes, circuit breaker, capability and utilization routing |
+| `services/voice_service.py` | Dynamic catalog aggregation with cold-boot fallback |
+| `services/cache_service.py` | SHA-256 standard and unbilled audio caches |
+| `services/inflight_manager.py` | Singleflight coalescing |
+| `services/concurrency_limiter.py` | Per-user stream and queue limits |
+| `services/clone_reference.py` | Resolves cloned voices to base64 `.npz` |
+| `services/usage_tracker.py` | PostgreSQL usage analytics |
 
----
+## Authentication
 
-## 2. Mô Hình Bảo Mật Kết Hợp (Client API Key + User Bearer Token + Management Key)
-
-Hệ thống kết hợp hài hòa giữa định danh ứng dụng và định danh người dùng:
-
-| Tầng Xác Thực | Vị trí cấu hình | Header truyền tải | Mục đích sử dụng |
-| :--- | :--- | :--- | :--- |
-| **1. Client API Key** | `settings.json` -> `client_api_keys` | `X-API-Key` | Định danh nền tảng ứng dụng (Android Mobile App, Web Client). Tiền tố `vc_live_...`. Dùng để ghi log `api_usage_logs` và phân tích lưu lượng. |
-| **2. User Bearer Token (JWT)** | Cấp động qua `/v1/auth/login` | `Authorization: Bearer <token>` | Xác thực danh tính người dùng cụ thể. Bắt buộc cho việc quản lý slot clone riêng tư (`/v1/voices/clone`), đọc hồ sơ cá nhân (`/v1/auth/me`), và tính hạn ngạch ký tự hàng ngày. |
-| **3. Management Key** (Admin Key) | `settings.json` -> `security.management_key` | `X-Management-Key` | Cấp quyền quản trị tối cao cho Web Dashboard (`/dashboard`) và các API quản trị `/v1/management/*`. |
-| **4. Upstream Worker Key** | `settings.json` -> `model_workers[].api_key` | `X-API-Key` | Gateway tự động gửi kèm khi gọi sang các node worker inference. |
-
----
-
-## 3. Biến Môi Trường (Environment Variables)
-
-| Biến | Mặc định | Mô tả |
+| Tier | Header | Used by |
 | :--- | :--- | :--- |
-| `DATABASE_URL` | `postgresql+asyncpg://voice_user:voice_pass@db:5432/voicecloner` | URL kết nối PostgreSQL chính (tự động fallback SQLite nếu lỗi) |
-| `REDIS_URL` | `redis://redis:6379/0` | URL kết nối Redis cho quota và blacklist token (tự động fallback in-memory) |
-| `CONFIG_PATH` | `/app/VoiceClonerAppServer/config/settings.json` | Đường dẫn file cấu hình động `settings.json` |
-| `JWT_SECRET_KEY` | `dev_secret_key_...` | Khóa bí mật ký JWT tokens |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Thời gian sống của Access Token (phút) |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Thời gian sống của Refresh Token (ngày) |
-| `GOOGLE_CLIENT_ID` | `""` | Google Web Client ID cho tính năng Google Sign-In |
-| `BUSINESS_TIMEZONE` | `Asia/Ho_Chi_Minh` | Múi giờ đặt lại hạn ngạch ký tự hàng ngày (00:00 nửa đêm) |
-| `WORKER_HEALTH_INTERVAL_SEC` | `15` | Chu kỳ probe `/internal/v1/health` của các worker đang bật (giây) |
-| `WORKER_HEALTH_TIMEOUT_SEC` | `3` | Timeout mỗi lần probe sức khỏe worker (giây) |
+| Management key | `X-Management-Key` | `/v1/management/*` and all dashboard data calls |
+| Client API key | `X-API-Key: vc_live_...` | All `/v1/*` client routes |
+| User token | `Authorization: Bearer <JWT>` | Speech, preview, clone, profile |
+| Worker key | `X-API-Key: vtts_worker_...` | Gateway → worker calls |
 
----
+When `security.require_client_api_key` is true, every `/v1/*` request except management requires a valid active client key, even if a user token is present.
 
-## 4. Danh Sách API Endpoints Chi Tiết
+## Configuration
 
-### 4.1 Xác Thực & Tài Khoản Người Dùng (`/v1/auth`)
-- `POST /v1/auth/register`: Đăng ký tài khoản (body: `{email, password, full_name}`). Trả về kèm token và object user chứa đầy đủ các hạn mức quota cá nhân.
-- `POST /v1/auth/login`: Đăng nhập lấy access/refresh token (body: `{email, password}`). Trả về kèm token và object user chứa đầy đủ các hạn mức quota cá nhân.
-- `POST /v1/auth/google`: Đăng nhập Google ID token (body: `{id_token}`). Trả về kèm token và object user chứa đầy đủ các hạn mức quota cá nhân.
-- `POST /v1/auth/refresh`: Cấp mới token (body: `{refresh_token}`).
-- `POST /v1/auth/logout`: Đăng xuất và đưa token vào Redis blacklist.
-- `GET /v1/auth/me`: Lấy thông tin tài khoản, số ký tự đã dùng trong ngày, số slot clone, cùng toàn bộ 7 hạn mức quota (`daily_tts_char_limit`, `max_speech_char_limit`, `max_preview_char_limit`, `rate_limit_requests_per_minute`, `max_concurrent_tts`, `max_queue_waiters`).
+Dynamic configuration lives in `config/settings.json` and is hot-reloaded:
 
-### 4.2 Thư Viện Giọng Nói & Nhân Bản Giọng (`/v1/voices`)
-- `GET /v1/voices`: Lấy danh mục giọng preset động được tổng hợp từ các upstream workers + các giọng clone riêng của user đăng nhập.
-- `GET /v1/voices/{voice_id}`: Chi tiết profile của một giọng nói (preset hoặc clone).
-- `GET /v1/voices/{voice_id}/audio`: Tải file âm thanh mẫu của giọng clone (bảo vệ IDOR).
-- `POST /v1/voices/clone`: Upload file âm thanh mẫu (3-15s) để nhân bản giọng đọc mới (tối đa 3 slots). Trích xuất speaker embedding (`.npz`) là bắt buộc: nếu upstream worker không trích xuất được, API trả `502` và dọn sạch file tạm thay vì tạo giọng hỏng.
-- `PUT /v1/voices/{voice_id}`: Cập nhật tên, phong cách, cài đặt của giọng clone.
-- `DELETE /v1/voices/{voice_id}`: Xóa giọng clone và giải phóng slot quota.
+| Section | Fields |
+| :--- | :--- |
+| `server` | `host`, `port` |
+| `security` | `management_key`, `require_client_api_key` |
+| `client_api_keys[]` | `id`, `name`, `key`, `is_active`, `daily_char_limit` |
+| `model_workers[]` | `id`, `url`, `api_key`, `max_concurrent` (1–64), `is_active` |
+| `default_user_limits` | `max_cloned_slots`, `daily_tts_char_limit`, `rate_limit_requests_per_minute`, `max_speech_char_limit`, `max_preview_char_limit`, `max_concurrent_tts`, `max_queue_waiters` |
+| `concurrency` | Fallback defaults for the same user-limit fields |
+| `audio_cache` | `max_size_mb`, `ttl_days`, `clean_interval_sec` |
 
-### 4.3 Tổng Hợp Âm Thanh (`/v1/audio`) & Nghe Thử
-- `POST /v1/audio/speech`: Tổng hợp văn bản thành 48kHz WAV audio (bảo vệ IDOR cho cloned voice, Audio Cache SHA-256 < 5ms, In-Flight SingleFlight request deduplication, Unbilled Cache claim khi retry, kiểm tra và trừ quota hàng ngày, kiểm tra rate limit per-user, xếp hàng concurrency per-user, lọc worker theo voice capability, loại worker unhealthy, điều phối Least-Active, đồng bộ timeout 120s). `ref_audio_path` do client gửi lên bị bỏ qua; giọng clone luôn được gửi sang worker dưới dạng `ref_npz_base64`.
-- `POST /v1/voices/preview`: Nghe thử nhanh mẫu giọng (hỗ trợ Audio Cache, giới hạn độ dài `max_preview_char_limit` của user, kiểm tra hạn mức còn lại, kiểm tra rate limit per-user, xếp hàng concurrency per-user, kiểm tra và trừ quota ký tự hàng ngày).
+Environment variables cover infrastructure and deployment only:
 
-### 4.4 Trạng Thái Hệ Thống (`/v1/system`)
-- `GET /health`: Probe kiểm tra container alive.
-- `GET /v1/system/status`: Báo cáo phần cứng, backend, số lượng worker phục vụ Android Client.
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | `postgresql+asyncpg://voice_user:voice_pass@db:5432/voicecloner` | Primary database |
+| `REDIS_URL` | `redis://redis:6379/0` | Quota, rate limit, token blacklist |
+| `CONFIG_PATH` | `/app/VoiceClonerAppServer/config/settings.json` | Settings file |
+| `JWT_SECRET_KEY` | dev value | Token signing key — replace in production |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token lifetime |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token lifetime |
+| `GOOGLE_CLIENT_ID` | empty | Google sign-in audience |
+| `BUSINESS_TIMEZONE` | `Asia/Ho_Chi_Minh` | Daily quota reset timezone |
+| `WORKER_HEALTH_INTERVAL_SEC` | `15` | Background health probe interval |
+| `WORKER_HEALTH_TIMEOUT_SEC` | `3` | Health probe timeout |
 
-### 4.5 Quản Trị Hệ Thống (`/v1/management` & `/dashboard`)
-- `GET /dashboard`: Giao diện điều khiển Web AI Voice Gateway Console (Dark Obsidian Theme).
-- `GET/PUT /v1/management/settings`: Đọc và cập nhật cấu hình hệ thống (Hot-Reload).
-- `GET/POST/DELETE/PATCH /v1/management/keys`: Quản lý danh sách Client API Key.
-- `GET/POST/DELETE/PATCH /v1/management/workers`: Quản lý danh sách, thêm/xóa/bật/tắt và ping test đồng thời các worker inference. Mỗi item trả thêm `routing_healthy` và `circuit_state`; ping cập nhật trạng thái định tuyến nhưng không thay đổi bộ đếm circuit breaker.
-- `POST /v1/management/workers/test`: Ping kiểm tra địa chỉ worker bất kỳ.
-- `POST /v1/management/cache/purge`: Dọn dẹp toàn bộ tệp âm thanh WAV trong bộ đệm cache.
-- `GET /v1/management/metrics/summary`: Truy vấn tổng hợp số liệu lưu lượng, tỷ lệ cache, độ trễ và log sự kiện (hỗ trợ lọc theo `hours` và `key_name`).
-- `GET/PATCH/DELETE /v1/management/users`: Quản trị tài khoản người dùng, xem và tùy biến độc lập toàn bộ 7 hạn mức quota (`max_cloned_slots`, `daily_tts_char_limit`, `rate_limit_requests_per_minute`, `max_speech_char_limit`, `max_preview_char_limit`, `max_concurrent_tts`, `max_queue_waiters`).
+## Endpoints
 
----
+### Authentication — `/v1/auth`
 
-## 5. Cơ Chế In-Flight SingleFlight Deduplication, Unbilled Cache & Timeout 120s
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/register` | Create account and return tokens plus limits |
+| `POST` | `/login` | Email/password login |
+| `POST` | `/google` | Google ID-token login |
+| `POST` | `/refresh` | Rotate access token |
+| `POST` | `/logout` | Revoke tokens |
+| `GET` | `/me` | Profile, daily usage, cloned slots, all 7 limits |
 
-### 5.1 In-Flight SingleFlight Deduplication (`InFlightManager`)
-- **Triệt tiêu tải trùng lặp lên GPU worker:** Khi nhiều client hoặc cùng một client gửi đồng thời các yêu cầu tổng hợp với cùng thông số văn bản và giọng đọc (`cache_key`), Gateway áp dụng mô hình SingleFlight.
-- **Phân định vai trò Creator và Waiters:**
-  - Request đầu tiên đóng vai trò **Creator**: Giữ slot concurrency limiter, trừ quota ký tự tạm thời và gửi request tới upstream AI worker.
-  - Các request tiếp theo đóng vai trò **Waiters**: Không chiếm slot concurrency limiter, không gửi request lặp tới worker, mà chờ trên `asyncio.Future` dùng chung của Creator.
-  - Khi Creator hoàn tất thành công, audio được lưu vào cache chuẩn `{cache_key}.wav`, Future được hoàn tất; toàn bộ Waiters nhận ngay âm thanh với header `X-Cache-Status: HIT` mà không tốn quota ký tự hay thời gian suy luận GPU.
+### Voices — `/v1/voices`
 
-### 5.2 Vòng Đời Unbilled Audio Cache (`unbilled_{cache_key}.wav`)
-- **Chống lãng phí chi phí tính toán khi client ngắt kết nối:**
-  - Nếu client Creator ngắt kết nối (client disconnect / timeout mạng) trong khi AI worker vẫn đang xử lý, Gateway dùng `asyncio.shield` để bảo vệ tiến trình inference tiếp tục hoàn tất.
-  - Quota của Creator được hoàn trả lại (`rollback_daily_quota`), và tệp âm thanh hoàn tất được lưu vào vùng đệm cách ly: `storage/audio_cache/unbilled_{cache_key}.wav`.
-- **Cơ chế Claim & Thăng hạng (Promote):**
-  - Khi client retry hoặc một Waiter trong hàng đợi cần kết quả: Gateway kiểm tra vùng unbilled cache.
-  - Nếu tìm thấy tệp hợp lệ (> 44 bytes), hệ thống kiểm tra và trừ quota ký tự của client claim, thăng hạng tệp thành cache chính thức `{cache_key}.wav` (atomic rename), và trả về phản hồi với header `X-Cache-Status: HIT-CLAIMED`.
-  - Tệp unbilled hỏng (<= 44 bytes) sẽ được tự động xóa bỏ dọn dẹp.
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `` | Aggregated preset catalog plus the user's cloned voices |
+| `GET` | `/{voice_id}` | Voice profile |
+| `GET` | `/{voice_id}/audio` | Clone reference WAV (IDOR-protected) |
+| `POST` | `/clone` | Upload a 3–15 s sample; embedding extraction is mandatory (502 on failure) |
+| `PUT` | `/{voice_id}` | Update a cloned voice |
+| `DELETE` | `/{voice_id}` | Delete a cloned voice and free its slot |
 
-### 5.3 Đồng Bộ Hóa Thời Gian Chờ Toàn Tuyến (120s Timeout Alignment)
-- Nhằm hỗ trợ trơn tru văn bản dài lên đến 2,000 ký tự (có thể mất 30–60 giây suy luận trên GPU tải cao):
-  - **Android OkHttpClient:** Cấu hình `readTimeout(120, TimeUnit.SECONDS)`.
-  - **Gateway Dispatcher:** Cấu hình HTTP client timeout tới worker `timeout=120.0s`.
-  - **Concurrency Limiter:** Cấu hình hàng đợi chờ slot `timeout_sec=120.0s`.
-  - Sự đồng bộ này loại bỏ triệt để hiện tượng client bị ngắt kết nối (`SocketTimeoutException`) trước khi server hoàn thành xử lý âm thanh.
+### Synthesis
 
----
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/v1/audio/speech` | Text → 48 kHz WAV through the full quota/cache/routing pipeline |
+| `POST` | `/v1/voices/preview` | Short preview with the same quota and cache rules |
 
-## 6. Hướng Dẫn Khởi Chạy
+### System
 
-### Chạy bằng Docker Compose:
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Container liveness |
+| `GET` | `/v1/system/status` | Hardware, backend, worker capacity summary |
+| `GET` | `/dashboard` | Dark management console shell (7 tabs); its data calls require the management key |
+
+### Management — `/v1/management` (management key)
+
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `GET`, `PUT` | `/settings` | Read/update settings with hot reload |
+| `GET`, `POST` | `/keys` | List/create client keys |
+| `DELETE` | `/keys/{key_id}` | Delete a key |
+| `PATCH` | `/keys/{key_id}/toggle` | Enable/disable a key |
+| `GET`, `POST` | `/workers` | List/create workers |
+| `DELETE` | `/workers/{worker_id}` | Delete a worker |
+| `PATCH` | `/workers/{worker_id}/toggle` | Enable/disable a worker |
+| `POST` | `/workers/test` | Probe an arbitrary worker URL |
+| `POST` | `/cache/purge` | Delete cached WAV files |
+| `GET` | `/metrics/summary` | Traffic, cache rate, latency, events |
+| `GET` | `/metrics/analysis` | Analysis-tab datasets |
+| `GET` | `/users` | List users with usage and slots |
+| `PATCH`, `DELETE` | `/users/{user_id}` | Edit limits or delete a user |
+
+## Speech Pipeline
+
+1. Resolve voice and enforce clone ownership before cache or quota lookups.
+2. Standard cache hit → `< 10 ms`, quota-exempt, `X-Cache-Status: HIT`.
+3. Unbilled cache hit → claim, deduct quota, promote, `HIT-CLAIMED`.
+4. Otherwise join or create a singleflight task; waiters do not consume concurrency slots.
+5. Cache miss → quota deduction, rate limit, per-user limiter, capability-aware worker selection.
+6. Client disconnect → shielded worker completion, quota rollback, unbilled file; abandoned waiters return 499.
+
+Cache key: `sha256(voice_id + ":" + normalized_text + ":" + smart_pause + ":48000hz")`.
+
+Timeouts: worker read 300 s (connect 10 s), queue wait 120 s, Android read 120 s.
+
+## Worker Routing
+
+- Health probes run every 15 s and mark workers unhealthy without touching breaker counters.
+- Open circuits are skipped until the 30 s cooldown, then half-open.
+- Candidates must support the requested voice (or cloning) and have free `max_concurrent` capacity.
+- Lowest `active_jobs / max_concurrent` wins; ties break round-robin.
+- One retry to another capable worker on 5xx/network errors; 4xx fails fast.
+- Cloned voices are sent as `ref_npz_base64`; the gateway never forwards `ref_audio_path`.
+
+## Running
+
+Root stack:
+
 ```bash
 docker compose up -d --build api
 ```
 
-### Chạy trực tiếp bằng Python:
+Standalone (from this directory):
+
 ```bash
+docker compose up -d --build
+# or
 pip install -r requirements.txt
 python main.py
 ```
-- Dashboard Console: `http://localhost:8000/dashboard`
-- Swagger UI Docs: `http://localhost:8000/docs`
 
----
+## Testing
 
-## 7. Kiểm Thử Hệ Thống
-
-Chạy bộ kiểm thử tự động pytest:
 ```bash
 pytest tests/ -v
 ```
-Toàn bộ 75 test cases kiểm tra capability load balancing, dynamic voice discovery, auth lifecycle, token blacklist, hot-reload settings on disk change, strict 3-tier client key verification across all endpoints, mandatory user auth on speech/preview/clone, audio cache hit/miss, speech & preview character limits, upfront remaining quota enforcement, user management (slots & real-time TTS chars) và dashboard delivery.
 
-### Kích Hoạt Git Pre-Push Hook Cục Bộ:
-Để git tự động chạy toàn bộ test và ngăn chặn lệnh push nếu có lỗi:
+The suite covers auth and token revocation, 3-tier key enforcement, per-user quotas and limits, cache flows, singleflight and unbilled claims, worker health and retry behavior, clone reference resolution, settings hot reload, dashboard delivery, and Docker packaging.
+
+Enable the pre-push hook once:
+
 ```bash
 git config core.hooksPath .githooks
 ```

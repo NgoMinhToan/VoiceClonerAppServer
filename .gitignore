@@ -9,3 +9,8 @@ storage/*.sqlite3
 storage/cloned_voices/
 storage/audio_cache/
 .env
+.venv/
+venv/
+*.egg-info/
+.superpowers/
+.DS_Store

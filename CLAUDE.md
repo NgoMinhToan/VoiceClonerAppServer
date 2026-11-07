@@ -1,59 +1,43 @@
 # CLAUDE.md - VoiceClonerAppServer
 
-Guidance for Claude Code and AI agents working on `VoiceClonerAppServer`.
+Guidance for AI agents working in the gateway repository.
 
-## Project Overview
-`VoiceClonerAppServer` is the central API Gateway, Reverse Proxy, Quota Controller, and Management Console inspired by the CLIProxyAPI architecture pattern.
+## Architecture
 
-- **Port**: 8000
-- **Dynamic Configuration**: `config/settings.json` with instant runtime hot-reload.
-- **Security**: 3-tier API Keys (`X-Management-Key`, `X-API-Key: vc_live_...`, upstream worker keys) + User Bearer Tokens (`Authorization: Bearer <JWT>`).
-- **Load Balancing**: Dynamic Voice Discovery (`GET /internal/v1/voices`) and Capability / Voice-Aware Least-Active Load Balancer with round-robin tiebreaking.
-- **Audio Caching**: Deterministic SHA-256 audio cache (`storage/audio_cache/`) delivering instant < 10ms responses with quota exemption.
-- **User Authentication**: Full JWT lifecycle (`/v1/auth/register`, `/v1/auth/login`, `/v1/auth/google`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/me`).
-- **Voice Cloning Management**: Multi-slot instant voice cloning (`/v1/voices/clone`) with IDOR protection.
+- `main.py` — FastAPI app, lifespan (DB init, discovery, health monitor), PNA middleware, client-key middleware, static dashboard mount.
+- `api/` — `auth.py`, `voices.py`, `speech.py`, `management.py`, `system.py`.
+- `core/` — `database.py`, `redis_client.py` (quota/rate limit/blacklist), `settings_manager.py` (hot reload), `security.py` (JWT and key dependencies).
+- `services/` — dispatcher, voice discovery, cache, singleflight, per-user limiter, clone reference, usage tracker.
+- `models/` — SQLAlchemy models and Pydantic schemas.
+- `config/settings.json` — runtime source of truth for keys, workers, limits, cache.
+- `static/dashboard/` — vanilla JS/CSS/HTML management console.
 
----
+## Commands
 
-## Mandatory Developer & AI Agent Rules
-
-### 0. Initial Repository Setup
-When opening or cloning this repository, ensure pre-push verification hooks are active:
-```bash
-git config core.hooksPath .githooks
-```
-
-### 1. Test Verification Before Push
-**Rule:** You MUST run and pass all test suites before making any git commit or push:
 ```bash
 pytest tests/ -v
+pytest tests/test_inflight_speech_e2e.py -v
+pytest tests/test_worker_health_routing.py -v
+docker compose up -d --build
+docker compose up -d --build api
 ```
-Ensure all 31+ test cases pass without regressions.
 
-### 2. Documentation Synchronization
-**Rule:** Whenever modifying API routes, database models, load balancing algorithms, or settings, you MUST update:
-- `PLAN.md`: Keep architectural roadmap and test verification matrix current.
-- `README.md`: Keep API reference and environment variable tables current.
+From the repository root, use `.\.venv\Scripts\python.exe -m pytest VoiceClonerAppServer/tests/ -v` on Windows.
 
-### 3. Git Branching
-- Always develop on a feature branch (`refactor/...` or `feature/...`).
-- Never push directly to `main` or `master` without explicit user confirmation.
+## Invariants
 
----
+- `/v1/*` requires a valid client key; management paths require `X-Management-Key`; speech/preview/clone require a user JWT.
+- Voice ownership (IDOR) is checked before cache or in-flight lookups.
+- Cache key: `sha256(voice_id:normalized_text:smart_pause:48000hz)`; never add speed or pitch.
+- Standard cache hits are quota-exempt; unbilled cache claims deduct quota and promote atomically.
+- Only 5xx and network errors strike the circuit breaker; 4xx is an input error and is not retried.
+- Health probes never mutate breaker counters.
+- Cloned voices are forwarded as `ref_npz_base64`; never forward `ref_audio_path`.
+- Worker read timeout 300 s, queue wait 120 s; keep client timeouts aligned.
 
-## Testing Commands
-```bash
-# Run full test suite
-pytest tests/ -v
+## Repository Rules
 
-# Run specific domain test suites
-pytest tests/test_exceptions_and_security.py -v
-pytest tests/test_capability_load_balancing.py -v
-pytest tests/test_dynamic_voice_discovery.py -v
-pytest tests/test_audio_cache.py -v
-pytest tests/test_auth_and_voices_e2e.py -v
-pytest tests/test_settings_and_3tier_auth.py -v
-pytest tests/test_management_users_and_pna.py -v
-pytest tests/test_dashboard_ui.py -v
-pytest tests/test_docker_packaging.py -v
-```
+- Run `pytest tests/ -v` before committing; never push a failing suite.
+- Update `README.md` for API/config changes and `CONTEXT.md` for architecture/behavior changes.
+- Activate hooks once per clone: `git config core.hooksPath .githooks`.
+- Develop on a feature branch; do not push directly to `master` without confirmation.
