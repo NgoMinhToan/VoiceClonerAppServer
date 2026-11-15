@@ -60,12 +60,15 @@ async def admob_ssv_callback(request: Request, db: AsyncSession = Depends(get_db
         )
 
     key_id = params["key_id"]
+    verifier_url = ads.ssv_verifier_url
     try:
-        keys = await admob_ssv.fetch_verifier_keys(ads.ssv_verifier_url)
-        if key_id not in keys:
-            # Google rotates verifier keys; refetch instead of rejecting blindly.
+        keys = await admob_ssv.fetch_verifier_keys(verifier_url)
+        if key_id not in keys and not admob_ssv.verifier_keys_are_fresh(verifier_url):
+            # Only a stale/failed key load may justify another fetch. A fresh
+            # set is authoritative for its TTL, so unknown keys fail closed
+            # without outbound I/O; forced refreshes are cooldown-limited.
             keys = await admob_ssv.fetch_verifier_keys(
-                ads.ssv_verifier_url, force_refresh=True
+                verifier_url, force_refresh=True
             )
     except Exception as exc:
         logger.error("AdMob verifier keys unavailable: %s", exc)

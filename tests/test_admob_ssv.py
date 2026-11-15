@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import time
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -48,16 +49,54 @@ def _keypair():
     return private_key, public_pem
 
 
-def _signed_query(private_key, params: dict[str, str]) -> tuple[str, str, str]:
+def _signed_query(
+    private_key, params: dict[str, str], key_id: str = "1"
+) -> tuple[str, str, str]:
     raw = "&".join(f"{k}={v}" for k, v in params.items())
     signature = private_key.sign(raw.encode(), ec.ECDSA(hashes.SHA256()))
-    return raw, base64.b64encode(signature).decode(), "1"
+    return raw, base64.b64encode(signature).decode(), key_id
 
 
-def _signed_url(private_key, params: dict[str, str]) -> str:
-    raw, signature, key_id = _signed_query(private_key, params)
+def _signed_url(private_key, params: dict[str, str], key_id: str = "1") -> str:
+    raw, signature, key_id = _signed_query(private_key, params, key_id=key_id)
     tail = urlencode({"signature": signature, "key_id": key_id})
     return f"{raw}&{tail}"
+
+
+class _FakeVerifierResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def _install_fake_verifier(monkeypatch, state):
+    """Replace the verifier HTTP client; `state` holds the payload and call log."""
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            state["calls"].append(url)
+            return _FakeVerifierResponse(state["payload"])
+
+    monkeypatch.setattr(admob_ssv, "httpx", SimpleNamespace(AsyncClient=_FakeClient))
+    return state
+
+
+def _unique_verifier_url() -> str:
+    return f"https://verifier.test/{uuid.uuid4().hex}.json"
 
 
 def _anon(bonus_tts_chars: int = 0) -> AnonymousUser:
@@ -354,6 +393,106 @@ def test_ssv_callback_rejected_when_disabled(monkeypatch):
     res = client.get(f"/ads/ssv?{urlencode(params)}")
 
     assert res.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Bounded verifier-key refresh policy
+# ---------------------------------------------------------------------------
+def test_unknown_key_id_with_fresh_cache_fails_closed_without_fetch(monkeypatch):
+    private_key, public_pem = _keypair()
+    verifier_url = _unique_verifier_url()
+    _patch_ads(monkeypatch, ssv_verifier_url=verifier_url)
+    # A fresh cache only knows key "1"; the callback is signed with key "2".
+    admob_ssv._verifier_key_cache[verifier_url] = (time.monotonic(), {"1": public_pem})
+    state = _install_fake_verifier(monkeypatch, {"calls": [], "payload": {"keys": []}})
+
+    account_id = asyncio.run(_create_anonymous_account())
+    params = {
+        "ad_unit": "unit-1",
+        "transaction_id": f"tx-{uuid.uuid4().hex}",
+        "user_id": account_id,
+    }
+    res = client.get(f"/ads/ssv?{_signed_url(private_key, params, key_id='2')}")
+
+    assert res.status_code == 403
+    assert state["calls"] == []
+
+
+@pytest.mark.asyncio
+async def test_forced_refresh_is_rate_limited(monkeypatch):
+    _private_key, public_pem = _keypair()
+    verifier_url = _unique_verifier_url()
+    state = _install_fake_verifier(
+        monkeypatch,
+        {"calls": [], "payload": {"keys": [{"keyId": 1, "pem": public_pem}]}},
+    )
+
+    first = await admob_ssv.fetch_verifier_keys(verifier_url, force_refresh=True)
+    second = await admob_ssv.fetch_verifier_keys(verifier_url, force_refresh=True)
+
+    assert first == {"1": public_pem}
+    assert second == {"1": public_pem}
+    assert len(state["calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_rotated_key_verifies_after_forced_refresh_cooldown(monkeypatch):
+    _old_private, old_pem = _keypair()
+    new_private, new_pem = _keypair()
+    verifier_url = _unique_verifier_url()
+    state = _install_fake_verifier(
+        monkeypatch,
+        {"calls": [], "payload": {"keys": [{"keyId": 1, "pem": old_pem}]}},
+    )
+
+    initial = await admob_ssv.fetch_verifier_keys(verifier_url)
+    raw, signature, _key_id = _signed_query(
+        new_private, {"user_id": "u1", "transaction_id": "t1"}
+    )
+    assert admob_ssv.verify_signature(raw, signature, "2", initial) is False
+
+    # Inside the cooldown the forced refresh is throttled to the cached set.
+    assert await admob_ssv.fetch_verifier_keys(verifier_url, force_refresh=True) == {
+        "1": old_pem
+    }
+    assert len(state["calls"]) == 1
+
+    # After the cooldown Google's rotated key set is fetched and verifies.
+    state["payload"] = {
+        "keys": [{"keyId": 1, "pem": old_pem}, {"keyId": 2, "pem": new_pem}]
+    }
+    admob_ssv._last_fetch_attempt[verifier_url] = (
+        time.monotonic() - admob_ssv.FORCED_REFRESH_COOLDOWN_SECONDS - 1
+    )
+    rotated = await admob_ssv.fetch_verifier_keys(verifier_url, force_refresh=True)
+
+    assert rotated["2"] == new_pem
+    assert admob_ssv.verify_signature(raw, signature, "2", rotated) is True
+    assert len(state["calls"]) == 2
+
+
+def test_rotated_key_verifies_after_stale_cache_reload(monkeypatch):
+    new_private, new_pem = _keypair()
+    verifier_url = _unique_verifier_url()
+    _patch_ads(monkeypatch, ssv_verifier_url=verifier_url, chars_per_ad=1000)
+    stale_at = time.monotonic() - admob_ssv.VERIFIER_KEY_CACHE_TTL_SECONDS - 1
+    admob_ssv._verifier_key_cache[verifier_url] = (stale_at, {"1": "stale-pem"})
+    state = _install_fake_verifier(
+        monkeypatch,
+        {"calls": [], "payload": {"keys": [{"keyId": 2, "pem": new_pem}]}},
+    )
+
+    account_id = asyncio.run(_create_anonymous_account())
+    params = {
+        "ad_unit": "unit-1",
+        "transaction_id": f"tx-{uuid.uuid4().hex}",
+        "user_id": account_id,
+    }
+    res = client.get(f"/ads/ssv?{_signed_url(new_private, params, key_id='2')}")
+
+    assert res.status_code == 200
+    assert res.text == "OK"
+    assert len(state["calls"]) == 1
 
 
 def test_ads_config_reports_remaining_ads(monkeypatch):
