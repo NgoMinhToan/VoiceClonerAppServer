@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -10,16 +9,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from VoiceClonerAppServer.core.database import get_db
-from VoiceClonerAppServer.core.redis_client import (
-    check_and_increment_daily_quota,
-    check_rate_limit,
-    get_daily_usage,
-    rollback_daily_quota,
-)
+from VoiceClonerAppServer.core.accounts import Account
+from VoiceClonerAppServer.core.database import AsyncSessionLocal, get_db
+from VoiceClonerAppServer.core.redis_client import check_rate_limit, rollback_daily_quota
 from VoiceClonerAppServer.core.security import get_current_user, get_optional_user, verify_client_api_key
 from VoiceClonerAppServer.core.settings_manager import ClientApiKeyConfig, settings_manager
-from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice, utc_now
+from VoiceClonerAppServer.models.db_models import User, Voice
 from VoiceClonerAppServer.models.schemas import PreviewSpeechRequest, SynthesisRequest
 from VoiceClonerAppServer.services.cache_service import cache_service
 from VoiceClonerAppServer.services.clone_reference import (
@@ -29,6 +24,11 @@ from VoiceClonerAppServer.services.clone_reference import (
 from VoiceClonerAppServer.services.concurrency_limiter import user_concurrency_limiter
 from VoiceClonerAppServer.services.inflight_manager import inflight_manager
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
+from VoiceClonerAppServer.services.quota_service import (
+    consume_speech_quota,
+    persist_daily_usage,
+    refund_bonus_chars,
+)
 from VoiceClonerAppServer.services.usage_tracker import usage_tracker
 from VoiceClonerAppServer.services.voice_service import voice_service
 
@@ -64,31 +64,19 @@ def _build_audio_response(
     return Response(content=content, media_type=media_type, headers=headers)
 
 
-async def _commit_daily_usage(db: AsyncSession, user_id: str, char_count: int) -> None:
-    try:
-        today = datetime.now(timezone.utc).date()
-        usage_stmt = select(DailyUsage).where(
-            DailyUsage.user_id == user_id,
-            DailyUsage.usage_date == today,
-        )
-        usage_res = await db.execute(usage_stmt)
-        daily_usage_record = usage_res.scalar_one_or_none()
-        if daily_usage_record:
-            daily_usage_record.tts_characters_used += char_count
-            daily_usage_record.updated_at = utc_now()
-        else:
-            daily_usage_record = DailyUsage(
-                user_id=user_id,
-                usage_date=today,
-                tts_characters_used=char_count,
-                created_at=utc_now(),
-                updated_at=utc_now(),
-            )
-            db.add(daily_usage_record)
-        await db.commit()
-    except Exception as ue:
-        await db.rollback()
-        logger.warning(f"Could not persist DailyUsage record: {ue}")
+async def _refund_consumed_quota(
+    db: AsyncSession,
+    account: Account,
+    char_count: int,
+    bonus_used: int,
+    reference: str,
+) -> None:
+    """Undo a consumed quota charge after synthesis fails or the client leaves."""
+    daily_charged = max(0, char_count - bonus_used)
+    if daily_charged > 0:
+        await rollback_daily_quota(account.id, daily_charged)
+    if bonus_used > 0:
+        await refund_bonus_chars(db, account, bonus_used, reference=reference)
 
 
 @router.post("/v1/audio/speech")
@@ -212,13 +200,7 @@ async def create_speech(
     unbilled_file = cache_service.get_unbilled_cached_file(cache_key)
     if unbilled_file and response_format in ("wav", "pcm"):
         t_claim = time.perf_counter()
-        current_used = await get_daily_usage(current_user.id)
-        remaining_chars = max(0, daily_limit - current_used)
-        if char_count > remaining_chars or not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
-            )
+        consumption = await consume_speech_quota(db, current_user, char_count, daily_limit)
 
         try:
             promoted_path = cache_service.promote_unbilled_cache(cache_key)
@@ -226,14 +208,16 @@ async def create_speech(
             wav_bytes = target_path.read_bytes()
         except Exception as e:
             logger.error(f"Failed to read/promote unbilled cache file for key {cache_key}: {e}")
-            await rollback_daily_quota(current_user.id, char_count)
+            await _refund_consumed_quota(
+                db, current_user, char_count, consumption.bonus_used, "unbilled_claim_failed"
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Lỗi khi truy xuất tệp âm thanh từ bộ nhớ đệm.",
             )
         duration_ms = (time.perf_counter() - t_claim) * 1000.0
 
-        await _commit_daily_usage(db, current_user.id, char_count)
+        await persist_daily_usage(db, current_user, char_count)
 
         await usage_tracker.log_usage(
             client_key_id=client_id,
@@ -326,13 +310,9 @@ async def create_speech(
                         )
                         return Response(status_code=499)
 
-                    current_used = await get_daily_usage(current_user.id)
-                    remaining_chars = max(0, daily_limit - current_used)
-                    if char_count > remaining_chars or not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
-                        )
+                    consumption = await consume_speech_quota(
+                        db, current_user, char_count, daily_limit
+                    )
 
                     try:
                         promoted = cache_service.promote_unbilled_cache(cache_key)
@@ -340,7 +320,9 @@ async def create_speech(
                             cache_service.save_cache(cache_key, audio_bytes)
                     except Exception as ce:
                         logger.warning(f"Could not persist cache during waiter claim: {ce}")
-                        await rollback_daily_quota(current_user.id, char_count)
+                        await _refund_consumed_quota(
+                            db, current_user, char_count, consumption.bonus_used, "waiter_claim_failed"
+                        )
                         raise HTTPException(
                             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Lỗi lưu trữ âm thanh, vui lòng thử lại sau.",
@@ -348,7 +330,7 @@ async def create_speech(
 
                     task.is_billed = True
 
-                    await _commit_daily_usage(db, current_user.id, char_count)
+                    await persist_daily_usage(db, current_user, char_count)
 
                     await usage_tracker.log_usage(
                         client_key_id=client_id,
@@ -370,20 +352,17 @@ async def create_speech(
                 waiter_disconnect_watcher.cancel()
 
     # Creator path: Deduct daily quota upfront for creator
-    current_used = await get_daily_usage(current_user.id)
-    remaining_chars = max(0, daily_limit - current_used)
-    if char_count > remaining_chars or not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
+    try:
+        consumption = await consume_speech_quota(db, current_user, char_count, daily_limit)
+    except Exception as exc:
         await inflight_manager.remove(cache_key)
-        exc = HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
-        )
-        task.future.set_exception(exc)
-        try:
-            _ = task.future.exception()
-        except Exception:
-            pass
-        raise exc
+        if not task.future.done():
+            task.future.set_exception(exc)
+            try:
+                _ = task.future.exception()
+            except Exception:
+                pass
+        raise
 
     t0 = time.perf_counter()
     quota_rolled_back = False
@@ -392,7 +371,19 @@ async def create_speech(
         nonlocal quota_rolled_back
         if not quota_rolled_back:
             quota_rolled_back = True
-            await rollback_daily_quota(current_user.id, char_count)
+            daily_charged = max(0, char_count - consumption.bonus_used)
+            if daily_charged > 0:
+                await rollback_daily_quota(current_user.id, daily_charged)
+            if consumption.bonus_used > 0:
+                # Use a dedicated session: the disconnect watcher may call this
+                # concurrently with the request-scoped session.
+                async with AsyncSessionLocal() as refund_db:
+                    await refund_bonus_chars(
+                        refund_db,
+                        current_user,
+                        consumption.bonus_used,
+                        reference=f"speech_failed:{cache_key[:12]}",
+                    )
 
     client_disconnected = False
 
@@ -505,7 +496,7 @@ async def create_speech(
 
         task.initiator_paid = True
 
-        await _commit_daily_usage(db, current_user.id, char_count)
+        await persist_daily_usage(db, current_user, char_count)
 
         if not task.future.done():
             task.future.set_result((audio_bytes, exec_sec, worker_id))
@@ -626,14 +617,7 @@ async def preview_voice(
             detail=f"Văn bản nghe thử vượt quá giới hạn tối đa cho phép ({char_count}/{max_preview_limit} ký tự).",
         )
 
-    # 2. Check remaining daily quota
-    current_used = await get_daily_usage(current_user.id)
-    remaining_chars = max(0, daily_limit - current_used)
-    if char_count > remaining_chars:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining_chars:,} ký tự còn lại, yêu cầu {char_count:,} ký tự). Hạn mức sẽ được làm mới vào 00:00.",
-        )
+    # 2. Quota (daily + bonus) is enforced on cache miss, so cache hits stay quota-exempt
 
     # 3. Check rate limit
     if not await check_rate_limit(current_user.id, max_requests=user_rate_limit):
@@ -682,12 +666,8 @@ async def preview_voice(
         except CloneReferenceUnavailable as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
-    # 4. Cache MISS: Deduct daily quota atomically
-    if not await check_and_increment_daily_quota(current_user.id, char_count, limit=daily_limit):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Bạn đã sử dụng hết hạn mức {daily_limit:,} ký tự hôm nay. Hạn mức sẽ được làm mới vào 00:00.",
-        )
+    # 4. Cache MISS: Deduct daily quota (spilling into bonus characters) atomically
+    consumption = await consume_speech_quota(db, current_user, char_count, daily_limit)
 
     t0 = time.perf_counter()
     try:
@@ -726,30 +706,8 @@ async def preview_voice(
             status_code=200,
         )
 
-        # Persist DailyUsage for user in SQL database
-        try:
-            today = datetime.now(timezone.utc).date()
-            usage_stmt = select(DailyUsage).where(
-                DailyUsage.user_id == current_user.id,
-                DailyUsage.usage_date == today,
-            )
-            usage_res = await db.execute(usage_stmt)
-            daily_usage_record = usage_res.scalar_one_or_none()
-            if daily_usage_record:
-                daily_usage_record.tts_characters_used += char_count
-                daily_usage_record.updated_at = utc_now()
-            else:
-                daily_usage_record = DailyUsage(
-                    user_id=current_user.id,
-                    usage_date=today,
-                    tts_characters_used=char_count,
-                    created_at=utc_now(),
-                    updated_at=utc_now(),
-                )
-                db.add(daily_usage_record)
-            await db.commit()
-        except Exception as ue:
-            logger.warning(f"Could not persist DailyUsage record for preview: {ue}")
+        # Persist daily usage for the account's own usage table
+        await persist_daily_usage(db, current_user, char_count)
 
         logger.info(f"✅ [PREVIEW COMPLETED] voice='{voice_id}' via worker '{worker_id}' in {duration_ms:.2f}ms: received {len(audio_bytes):,} bytes @ 48kHz")
 
@@ -762,10 +720,14 @@ async def preview_voice(
         }
         return Response(content=audio_bytes, media_type="audio/wav", headers=headers)
     except HTTPException:
-        await rollback_daily_quota(current_user.id, char_count)
+        await _refund_consumed_quota(
+            db, current_user, char_count, consumption.bonus_used, "preview_failed"
+        )
         raise
     except Exception as e:
-        await rollback_daily_quota(current_user.id, char_count)
+        await _refund_consumed_quota(
+            db, current_user, char_count, consumption.bonus_used, "preview_failed"
+        )
         duration_ms = (time.perf_counter() - t0) * 1000.0
         logger.error(f"Preview synthesis error: {e}", exc_info=True)
         raise HTTPException(

@@ -28,6 +28,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 | `services/voice_service.py` | Dynamic discovery and catalog aggregation |
 | `services/cache_service.py` | Standard and unbilled cache lifecycle |
 | `services/inflight_manager.py` | Singleflight tasks and claim locks |
+| `services/quota_service.py` | Daily quota consumption, bonus-character debit/refund, usage persistence |
 | `services/concurrency_limiter.py` | Per-user concurrency and queue |
 | `services/clone_reference.py` | Base64 `.npz` resolution and WAV backfill |
 | `services/usage_tracker.py` | Usage logs and dashboard analytics |
@@ -43,6 +44,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 - Default per-user limits: 3 cloned slots, 50,000 chars/day, 60 requests/minute, 2,000 chars per speech, 250 chars per preview, 1 concurrent stream, 1 queue waiter.
 - Limits are copied onto each user row at registration and editable per user through the dashboard or `PATCH /v1/management/users/{id}`.
 - Rate limiting uses a Cloudflare-style sliding-window counter with weighted previous-minute data.
+- `bonus_tts_chars` is spent only after the daily limit is exhausted, on both speech cache-miss paths and preview cache misses; cache hits remain quota-exempt. Debits use a conditional `UPDATE` (never negative); failed synthesis refunds through a `tts_refund` ledger row. Exhausted requests return 403 with both the remaining daily characters and the bonus balance.
 
 ## 4. Speech Pipeline
 
@@ -50,7 +52,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 - Standard cache: `storage/audio_cache/{sha256}.wav`, served under 10 ms, quota-exempt.
 - Unbilled cache: `unbilled_{sha256}.wav`, produced when the client disconnects; claimed and promoted on retry.
 - Singleflight: one worker job per cache key; waiters share an `asyncio.Future` without consuming concurrency slots.
-- Quota and rate limits are checked per user; failures roll back quota.
+- Quota and rate limits are checked per user; failures roll back quota. `consume_speech_quota` spills overflow into bonus characters, and `persist_daily_usage` writes to `daily_usages` or `anonymous_daily_usages` by account type.
 - Client disconnect is detected by an active `receive()` watcher plus a `X-Client-Timeout` fallback; abandoned waiters return 499.
 - Cache key: `sha256(voice_id:normalized_text:smart_pause:48000hz)`. Speed and pitch are client-side.
 
@@ -82,4 +84,4 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 pytest tests/ -v
 ```
 
-Current suite: 140 tests across 24 modules. Run before every commit; the pre-push hook does the same.
+Current suite: 150 tests across 25 modules. Run before every commit; the pre-push hook does the same.
