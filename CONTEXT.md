@@ -15,6 +15,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 | Module | Responsibility |
 | :--- | :--- |
 | `api/auth.py` | Registration, login, Google auth, refresh, logout, profile |
+| `api/ads.py` | AdMob SSV callback (`/ads/ssv`) and rewarded-ad client config (`/v1/ads/config`) |
 | `api/voices.py` | Catalog, preview, cloning, update, delete, reference audio |
 | `api/speech.py` | Speech pipeline and preview pipeline |
 | `api/management.py` | Keys, workers, settings, users, metrics, cache purge |
@@ -24,6 +25,8 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 | `core/redis_client.py` | Daily quota, sliding-window rate limit, token blacklist |
 | `core/settings_manager.py` | Pydantic settings, disk watcher, change hooks |
 | `services/anonymous_service.py` | Anonymous install-account lookup/creation and per-IP daily signup rate limit |
+| `services/admob_ssv.py` | AdMob signed-content rebuild, ECDSA-SHA256 verification, verifier-key fetch and 1-hour cache |
+| `services/ad_rewards_service.py` | Ad reward claims, daily ad cap, and bonus-character crediting |
 | `services/model_dispatcher.py` | Health state, breaker, capability filtering, utilization routing |
 | `services/voice_service.py` | Dynamic discovery and catalog aggregation |
 | `services/cache_service.py` | Standard and unbilled cache lifecycle |
@@ -45,6 +48,8 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 - Limits are copied onto each user row at registration and editable per user through the dashboard or `PATCH /v1/management/users/{id}`.
 - Rate limiting uses a Cloudflare-style sliding-window counter with weighted previous-minute data.
 - `bonus_tts_chars` is spent only after the daily limit is exhausted, on both speech cache-miss paths and preview cache misses; cache hits remain quota-exempt. Debits use a conditional `UPDATE` (never negative); failed synthesis refunds through a `tts_refund` ledger row. Exhausted requests return 403 with both the remaining daily characters and the bonus balance.
+- Rewarded ads are credited only by AdMob SSV at `GET /ads/ssv`, which sits outside `/v1` (no client key, no JWT). The raw query is rebuilt without `signature`/`key_id`, verified as ECDSA-SHA256 against Google verifier keys cached for 1 hour and refetched for unknown `key_id`s. Invalid signatures, disallowed ad units, and disabled rewards return 403; unknown accounts return 404; verifier outages return 503 so AdMob retries.
+- Rewards are server-decided: the callback's `reward_amount` is ignored and `ad_rewards.chars_per_ad` is credited. `ad_reward_claims.transaction_id` is the primary key, so replays return 200 without a second credit; over `max_ads_per_user_per_day` the claim is stored with `chars_granted=0` and returns 200. `GET /v1/ads/config` (JWT) reports the ad config plus today's watched/remaining ads.
 
 ## 4. Speech Pipeline
 
@@ -84,4 +89,4 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 pytest tests/ -v
 ```
 
-Current suite: 150 tests across 25 modules. Run before every commit; the pre-push hook does the same.
+Current suite: 165 tests across 26 modules. Run before every commit; the pre-push hook does the same.

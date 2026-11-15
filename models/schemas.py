@@ -103,6 +103,18 @@ class UserProfileResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Rewarded Ads Schemas
+# ---------------------------------------------------------------------------
+class AdsConfigResponse(BaseModel):
+    enabled: bool
+    chars_per_ad: int
+    max_ads_per_day: int
+    ads_watched_today: int = 0
+    ads_remaining_today: int = 0
+    rewarded_ad_unit_id: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Voice & Synthesis Schemas
 # ---------------------------------------------------------------------------
 class VoiceProfileModel(BaseModel):

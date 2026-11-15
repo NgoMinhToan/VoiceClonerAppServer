@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from VoiceClonerAppServer.api.ads import router as ads_router
 from VoiceClonerAppServer.api.auth import router as auth_router
 from VoiceClonerAppServer.api.management import router as management_router
 from VoiceClonerAppServer.api.speech import router as speech_router
@@ -171,6 +172,7 @@ DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Include Routers
+app.include_router(ads_router)
 app.include_router(auth_router)
 app.include_router(management_router)
 app.include_router(speech_router)

@@ -57,6 +57,8 @@ Dynamic configuration lives in `config/settings.json` and is hot-reloaded:
 | `client_api_keys[]` | `id`, `name`, `key`, `is_active`, `daily_char_limit` |
 | `model_workers[]` | `id`, `url`, `api_key`, `max_concurrent` (1–64), `is_active` |
 | `default_user_limits` | `max_cloned_slots`, `daily_tts_char_limit`, `rate_limit_requests_per_minute`, `max_speech_char_limit`, `max_preview_char_limit`, `max_concurrent_tts`, `max_queue_waiters` |
+| `default_anonymous_limits` | Same fields for anonymous install accounts; `max_cloned_slots` defaults to `0` |
+| `ad_rewards` | `enabled`, `chars_per_ad`, `max_ads_per_user_per_day`, `rewarded_ad_unit_id`, `allowed_ad_unit_ids`, `ssv_verifier_url` |
 | `concurrency` | Fallback defaults for the same user-limit fields |
 | `audio_cache` | `max_size_mb`, `ttl_days`, `clean_interval_sec` |
 
@@ -105,6 +107,13 @@ Environment variables cover infrastructure and deployment only:
 | :--- | :--- | :--- |
 | `POST` | `/v1/audio/speech` | Text → 48 kHz WAV through the full quota/cache/routing pipeline |
 | `POST` | `/v1/voices/preview` | Short preview with the same quota and cache rules |
+
+### Rewarded Ads
+
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `/ads/ssv` | AdMob server-side verification callback (outside `/v1`; no client key or JWT, ECDSA signature-checked) |
+| `GET` | `/v1/ads/config` | Rewarded-ad configuration and remaining ad allowance for the caller |
 
 ### System
 
