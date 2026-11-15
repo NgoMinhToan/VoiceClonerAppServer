@@ -90,6 +90,12 @@ Environment variables cover infrastructure and deployment only:
 | `POST` | `/logout` | Revoke tokens |
 | `GET` | `/me` | Profile, daily usage, cloned slots, all 7 limits |
 
+### Tokens — `/v1/tokens`
+
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `/balance` | Bonus characters, daily characters used, limit, and remaining (JWT) |
+
 ### Voices — `/v1/voices`
 
 | Method | Path | Purpose |

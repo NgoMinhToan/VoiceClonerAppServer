@@ -115,6 +115,16 @@ class AdsConfigResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Token Balance Schemas
+# ---------------------------------------------------------------------------
+class TokensBalanceResponse(BaseModel):
+    bonus_tts_chars: int = 0
+    daily_tts_chars_used: int = 0
+    daily_tts_chars_limit: int = 50000
+    daily_tts_chars_remaining: int = 50000
+
+
+# ---------------------------------------------------------------------------
 # Voice & Synthesis Schemas
 # ---------------------------------------------------------------------------
 class VoiceProfileModel(BaseModel):

@@ -26,6 +26,7 @@ from VoiceClonerAppServer.api.auth import router as auth_router
 from VoiceClonerAppServer.api.management import router as management_router
 from VoiceClonerAppServer.api.speech import router as speech_router
 from VoiceClonerAppServer.api.system import get_local_ip, router as system_router
+from VoiceClonerAppServer.api.tokens import router as tokens_router
 from VoiceClonerAppServer.api.voices import router as voices_router
 from VoiceClonerAppServer.core.database import init_db
 from VoiceClonerAppServer.core.redis_client import redis_client
@@ -176,6 +177,7 @@ app.include_router(ads_router)
 app.include_router(auth_router)
 app.include_router(management_router)
 app.include_router(speech_router)
+app.include_router(tokens_router)
 app.include_router(voices_router)
 app.include_router(system_router)
 

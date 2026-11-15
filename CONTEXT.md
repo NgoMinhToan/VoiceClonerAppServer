@@ -15,6 +15,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 | Module | Responsibility |
 | :--- | :--- |
 | `api/auth.py` | Registration, login, Google auth, refresh, logout, profile |
+| `api/tokens.py` | Daily quota usage and bonus-character balance (`/v1/tokens/balance`) |
 | `api/ads.py` | AdMob SSV callback (`/ads/ssv`) and rewarded-ad client config (`/v1/ads/config`) |
 | `api/voices.py` | Catalog, preview, cloning, update, delete, reference audio |
 | `api/speech.py` | Speech pipeline and preview pipeline |
@@ -48,6 +49,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 - Limits are copied onto each user row at registration and editable per user through the dashboard or `PATCH /v1/management/users/{id}`.
 - Rate limiting uses a Cloudflare-style sliding-window counter with weighted previous-minute data.
 - `bonus_tts_chars` is spent only after the daily limit is exhausted, on both speech cache-miss paths and preview cache misses; cache hits remain quota-exempt. Debits use a conditional `UPDATE` (never negative); failed synthesis refunds through a `tts_refund` ledger row. Exhausted requests return 403 with both the remaining daily characters and the bonus balance.
+- `GET /v1/tokens/balance` (JWT) reports `bonus_tts_chars`, today's `daily_tts_chars_used`, the effective `daily_tts_chars_limit` from the account row (falling back to the account-type defaults), and `daily_tts_chars_remaining = max(0, limit - used)`.
 - Rewarded ads are credited only by AdMob SSV at `GET /ads/ssv`, which sits outside `/v1` (no client key, no JWT). The raw query is rebuilt without `signature`/`key_id`, verified as ECDSA-SHA256 against Google verifier keys cached for 1 hour. Unknown `key_id`s fail closed while the cached set is fresh; refetches are capped at one attempt per 60 s (counted from any fetch attempt) and failed fetches back off for 60 s, so the unauthenticated endpoint cannot drive unbounded outbound requests. Invalid signatures, disallowed ad units, and disabled rewards return 403; unknown accounts return 404; verifier outages return 503 so AdMob retries.
 - Rewards are server-decided: the callback's `reward_amount` is ignored and `ad_rewards.chars_per_ad` is credited. `ad_reward_claims.transaction_id` is the primary key, so replays return 200 without a second credit; over `max_ads_per_user_per_day` the claim is stored with `chars_granted=0` and returns 200. `GET /v1/ads/config` (JWT) reports the ad config plus today's watched/remaining ads.
 
@@ -89,4 +91,4 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 pytest tests/ -v
 ```
 
-Current suite: 169 tests across 26 modules. Run before every commit; the pre-push hook does the same.
+Current suite: 170 tests across 27 modules. Run before every commit; the pre-push hook does the same.
