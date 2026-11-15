@@ -153,6 +153,7 @@ async def test_insufficient_bonus_raises_403_and_keeps_balance(monkeypatch):
         assert "100 ký tự còn lại" in detail
         assert "50 ký tự thưởng" in detail
         assert "300 ký tự" in detail
+        assert "quảng cáo" in detail
 
         await db.refresh(account)
         assert account.bonus_tts_chars == 50
@@ -276,6 +277,63 @@ async def test_speech_failure_refunds_bonus_exactly_once(monkeypatch):
 
         res = await client.post(
             "/v1/audio/speech", headers=headers, json={"voice": "minh_duc", "text": text}
+        )
+        assert res.status_code == 503
+
+        async with AsyncSessionLocal() as session:
+            user = await session.get(User, user_id)
+            ledger = (
+                await session.execute(
+                    select(BonusCharLedger).where(BonusCharLedger.account_id == user_id)
+                )
+            ).scalars().all()
+
+        assert user.bonus_tts_chars == 500
+        assert await get_daily_usage(user_id) == 0
+        assert sorted((row.delta, row.reason) for row in ledger) == [
+            (-expected_bonus, "tts_spend"),
+            (expected_bonus, "tts_refund"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_preview_failure_consumes_and_refunds_bonus(monkeypatch):
+    await init_db()
+
+    async def failing_synth(**_kwargs):
+        raise RuntimeError("preview worker exploded")
+
+    monkeypatch.setattr(model_dispatcher, "synthesize", failing_synth)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        email = f"preview_bonus_{uuid.uuid4().hex[:8]}@example.com"
+        reg = await client.post(
+            "/v1/auth/register",
+            headers=API_KEY_HEADER,
+            json={"email": email, "password": "password123", "full_name": "Preview Bonus"},
+        )
+        assert reg.status_code == 200
+        token = reg.json()["access_token"]
+        user_id = reg.json()["user"]["id"]
+        headers = {"Authorization": f"Bearer {token}", **API_KEY_HEADER}
+
+        async with AsyncSessionLocal() as session:
+            user = await session.get(User, user_id)
+            user.daily_tts_char_limit = 10
+            user.max_preview_char_limit = 500
+            user.bonus_tts_chars = 500
+            await session.commit()
+
+        # Unique text keeps the preview on the cache-miss (quota-charged) path.
+        text = f"PREVIEW_REFUND_{uuid.uuid4().hex}"
+        expected_bonus = len(text) - 10
+
+        res = await client.post(
+            "/v1/voices/preview",
+            headers=headers,
+            json={"voice_id": "minh_duc", "text": text},
         )
         assert res.status_code == 503
 

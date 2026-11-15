@@ -24,6 +24,7 @@ from VoiceClonerAppServer.models.db_models import (
     AnonymousUser,
     Base,
     BonusCharLedger,
+    User,
 )
 from VoiceClonerAppServer.services import ad_rewards_service, admob_ssv
 
@@ -156,6 +157,22 @@ async def _create_anonymous_account() -> str:
                 email=f"anon+{install_id}@anonymous.local",
                 full_name="Khách",
                 max_cloned_slots=0,
+                bonus_tts_chars=0,
+            )
+        )
+        await db.commit()
+    return account_id
+
+
+async def _create_user_account() -> str:
+    account_id = str(uuid.uuid4())
+    async with AsyncSessionLocal() as db:
+        db.add(
+            User(
+                id=account_id,
+                email=f"user+{account_id}@example.com",
+                full_name="Người dùng",
+                auth_provider="local",
                 bonus_tts_chars=0,
             )
         )
@@ -336,6 +353,49 @@ def test_ssv_callback_credits_once_across_replay(monkeypatch):
     me = client.get("/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["bonus_tts_chars"] == 1000
+
+
+def test_ssv_callback_credits_real_user_account(monkeypatch):
+    private_key, public_pem = _keypair()
+
+    async def fake_fetch(url, force_refresh=False):
+        return {"1": public_pem}
+
+    monkeypatch.setattr(admob_ssv, "fetch_verifier_keys", fake_fetch)
+    _patch_ads(monkeypatch, chars_per_ad=750, max_ads_per_user_per_day=10)
+
+    account_id = asyncio.run(_create_user_account())
+    token = create_access_token(account_id, account_type="user")
+
+    params = {
+        "ad_unit": "unit-1",
+        "transaction_id": f"tx-{uuid.uuid4().hex}",
+        "user_id": account_id,
+    }
+    res = client.get(f"/ads/ssv?{_signed_url(private_key, params)}")
+
+    assert res.status_code == 200
+    assert res.text == "OK"
+
+    me = client.get("/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    assert me.json()["bonus_tts_chars"] == 750
+
+    async def _ledger_rows():
+        async with AsyncSessionLocal() as db:
+            return (
+                await db.execute(
+                    select(BonusCharLedger).where(
+                        BonusCharLedger.account_id == account_id
+                    )
+                )
+            ).scalars().all()
+
+    ledger = asyncio.run(_ledger_rows())
+    assert len(ledger) == 1
+    assert ledger[0].account_type == "user"
+    assert ledger[0].delta == 750
+    assert ledger[0].reason == "ad_reward"
 
 
 def test_ssv_callback_rejects_tampered_query(monkeypatch):

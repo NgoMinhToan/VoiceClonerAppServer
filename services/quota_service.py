@@ -49,7 +49,8 @@ def _exceeded_detail(remaining: int, balance: int, char_count: int) -> str:
     return (
         f"Hạn mức ký tự còn lại hôm nay không đủ ({remaining:,} ký tự còn lại, "
         f"{balance:,} ký tự thưởng, yêu cầu {char_count:,} ký tự). "
-        "Hạn mức sẽ được làm mới vào 00:00."
+        "Hạn mức sẽ được làm mới vào 00:00. "
+        "Xem một quảng cáo ngắn để nhận thêm ký tự thưởng."
     )
 
 
