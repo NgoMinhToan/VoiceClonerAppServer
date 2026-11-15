@@ -5,7 +5,9 @@
   },
   "security": {
     "management_key": "vc_admin_secret_key_123",
-    "require_client_api_key": true
+    "require_client_api_key": true,
+    "anonymous_signup_per_ip_per_day": 10,
+    "trust_forwarded_for": false
   },
   "client_api_keys": [
     {
@@ -44,6 +46,23 @@
     "max_preview_char_limit": 250,
     "max_concurrent_tts": 1,
     "max_queue_waiters": 1
+  },
+  "default_anonymous_limits": {
+    "max_cloned_slots": 0,
+    "daily_tts_char_limit": 50000,
+    "rate_limit_requests_per_minute": 60,
+    "max_speech_char_limit": 2000,
+    "max_preview_char_limit": 250,
+    "max_concurrent_tts": 1,
+    "max_queue_waiters": 1
+  },
+  "ad_rewards": {
+    "enabled": false,
+    "chars_per_ad": 1000,
+    "max_ads_per_user_per_day": 10,
+    "rewarded_ad_unit_id": "",
+    "allowed_ad_unit_ids": [],
+    "ssv_verifier_url": "https://www.gstatic.com/admob/reward/verifier-keys.json"
   },
   "concurrency": {
     "daily_tts_char_limit": 100000,
