@@ -2602,6 +2602,40 @@ async function fetchSettings() {
         if (queue) queue.value = data.default_user_limits.max_queue_waiters ?? 1;
       }
 
+      // Default Anonymous Limits
+      if (data.default_anonymous_limits) {
+        const slots = document.getElementById('defaultAnonymousSlotsInput');
+        if (slots) slots.value = 0;
+        const daily = document.getElementById('defaultAnonymousDailyTtsLimitInput');
+        if (daily) daily.value = data.default_anonymous_limits.daily_tts_char_limit ?? 50000;
+        const rate = document.getElementById('defaultAnonymousRateLimitInput');
+        if (rate) rate.value = data.default_anonymous_limits.rate_limit_requests_per_minute ?? 60;
+        const speech = document.getElementById('defaultAnonymousSpeechLimitInput');
+        if (speech) speech.value = data.default_anonymous_limits.max_speech_char_limit ?? 2000;
+        const prev = document.getElementById('defaultAnonymousPreviewLimitInput');
+        if (prev) prev.value = data.default_anonymous_limits.max_preview_char_limit ?? 250;
+        const tts = document.getElementById('defaultAnonymousConcurrentInput');
+        if (tts) tts.value = data.default_anonymous_limits.max_concurrent_tts ?? 1;
+        const queue = document.getElementById('defaultAnonymousQueueInput');
+        if (queue) queue.value = data.default_anonymous_limits.max_queue_waiters ?? 1;
+      }
+
+      // Ad Rewards (AdMob)
+      if (data.ad_rewards) {
+        const enabled = document.getElementById('adRewardsEnabled');
+        if (enabled) enabled.checked = data.ad_rewards.enabled ?? false;
+        const perAd = document.getElementById('adRewardsCharsPerAd');
+        if (perAd) perAd.value = data.ad_rewards.chars_per_ad ?? 1000;
+        const perDay = document.getElementById('adRewardsMaxPerDay');
+        if (perDay) perDay.value = data.ad_rewards.max_ads_per_user_per_day ?? 10;
+        const unitId = document.getElementById('adRewardsUnitId');
+        if (unitId) unitId.value = data.ad_rewards.rewarded_ad_unit_id || '';
+        const allowed = document.getElementById('adRewardsAllowedUnits');
+        if (allowed) allowed.value = (data.ad_rewards.allowed_ad_unit_ids || []).join('\n');
+        const verifier = document.getElementById('adRewardsVerifierUrl');
+        if (verifier) verifier.value = data.ad_rewards.ssv_verifier_url || '';
+      }
+
       // Audio Cache
       if (data.audio_cache) {
         const size = document.getElementById('maxCacheSizeMbInput');
@@ -2616,6 +2650,7 @@ async function fetchSettings() {
     console.error('Failed to fetch settings', e);
   }
   fetchUsers();
+  fetchAnonymousUsers();
 }
 
 async function saveServerSettings() {
@@ -2722,6 +2757,76 @@ async function saveCacheSettings() {
     }
   } catch (e) {
     showToast('Lỗi lưu cấu hình cache', 'error');
+  }
+}
+
+async function saveAnonymousLimitsSettings() {
+  const dailyLimit = parseInt(document.getElementById('defaultAnonymousDailyTtsLimitInput')?.value || '50000', 10);
+  const rateLimit = parseInt(document.getElementById('defaultAnonymousRateLimitInput')?.value || '60', 10);
+  const speechLimit = parseInt(document.getElementById('defaultAnonymousSpeechLimitInput')?.value || '2000', 10);
+  const previewLimit = parseInt(document.getElementById('defaultAnonymousPreviewLimitInput')?.value || '250', 10);
+  const maxConcurrent = parseInt(document.getElementById('defaultAnonymousConcurrentInput')?.value || '1', 10);
+  const queueVal = document.getElementById('defaultAnonymousQueueInput')?.value;
+  const maxQueue = queueVal !== '' && queueVal !== undefined ? parseInt(queueVal, 10) : 1;
+
+  try {
+    const res = await apiRequest('/v1/management/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        default_anonymous_limits: {
+          max_cloned_slots: 0,
+          daily_tts_char_limit: dailyLimit,
+          rate_limit_requests_per_minute: rateLimit,
+          max_speech_char_limit: speechLimit,
+          max_preview_char_limit: previewLimit,
+          max_concurrent_tts: maxConcurrent,
+          max_queue_waiters: maxQueue,
+        },
+      }),
+    });
+    if (res.ok) {
+      showToast('Đã lưu cấu hình mặc định cho tài khoản ẩn danh!', 'success');
+    } else {
+      showToast('Không thể lưu cấu hình hạn mức ẩn danh!', 'error');
+    }
+  } catch (e) {
+    showToast('Lỗi gửi cập nhật cấu hình mặc định anonymous', 'error');
+  }
+}
+
+async function saveAdRewardSettings() {
+  const enabled = document.getElementById('adRewardsEnabled')?.checked ?? false;
+  const charsPerAd = parseInt(document.getElementById('adRewardsCharsPerAd')?.value || '1000', 10);
+  const maxPerDayVal = document.getElementById('adRewardsMaxPerDay')?.value;
+  const maxPerDay = maxPerDayVal !== '' && maxPerDayVal !== undefined ? parseInt(maxPerDayVal, 10) : 10;
+  const unitId = document.getElementById('adRewardsUnitId')?.value.trim() || '';
+  const allowedUnits = (document.getElementById('adRewardsAllowedUnits')?.value || '')
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean);
+  const verifierUrl = document.getElementById('adRewardsVerifierUrl')?.value.trim() || '';
+
+  try {
+    const res = await apiRequest('/v1/management/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        ad_rewards: {
+          enabled: enabled,
+          chars_per_ad: charsPerAd,
+          max_ads_per_user_per_day: maxPerDay,
+          rewarded_ad_unit_id: unitId,
+          allowed_ad_unit_ids: allowedUnits,
+          ssv_verifier_url: verifierUrl,
+        },
+      }),
+    });
+    if (res.ok) {
+      showToast('Đã lưu cấu hình phần thưởng quảng cáo!', 'success');
+    } else {
+      showToast('Không thể lưu cấu hình quảng cáo!', 'error');
+    }
+  } catch (e) {
+    showToast('Lỗi gửi cập nhật cấu hình quảng cáo', 'error');
   }
 }
 
@@ -2903,6 +3008,159 @@ async function submitEditUser() {
     }
   } catch (e) {
     showToast('Lỗi cập nhật người dùng!', 'error');
+  }
+}
+
+// ── ANONYMOUS ACCOUNTS MANAGEMENT ──
+
+let allAnonymousUsersData = [];
+
+function maskEmail(email) {
+  if (!email) return '--';
+  const at = email.indexOf('@');
+  if (at <= 0) return email;
+  const local = email.slice(0, at);
+  const domain = email.slice(at);
+  return `${local.slice(0, 1)}${'*'.repeat(Math.max(1, local.length - 1))}${domain}`;
+}
+
+function shortInstallId(installId) {
+  if (!installId) return '--';
+  return installId.length > 8 ? `${installId.slice(0, 8)}…` : installId;
+}
+
+async function fetchAnonymousUsers() {
+  const tbody = document.getElementById('anonymousUsersTableBody');
+  if (!tbody) return;
+  try {
+    const res = await apiRequest('/v1/management/anonymous-users');
+    if (!res.ok) return;
+    allAnonymousUsersData = await res.json();
+    renderAnonymousUsersTable(allAnonymousUsersData);
+  } catch (e) {
+    console.error('fetchAnonymousUsers failed', e);
+  }
+}
+
+function renderAnonymousUsersTable(users) {
+  const tbody = document.getElementById('anonymousUsersTableBody');
+  if (!tbody) return;
+
+  if (users.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center py-6 text-slate-500">Chưa có tài khoản ẩn danh nào.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = users.map(u => {
+    const limitsTitle = [
+      `Daily TTS: ${(u.daily_tts_char_limit || 0).toLocaleString()} chars`,
+      `Rate: ${u.rate_limit_requests_per_minute || 0} req/min`,
+      `Speech: ${(u.max_speech_char_limit || 0).toLocaleString()} chars`,
+      `Preview: ${(u.max_preview_char_limit || 0).toLocaleString()} chars`,
+      `Concurrent: ${u.max_concurrent_tts || 0}`,
+      `Queue: ${u.max_queue_waiters || 0}`,
+      `Clone slots: ${u.max_cloned_slots || 0}`,
+    ].join(' • ');
+
+    return `
+    <tr class="k-table-row border-b border-slate-800/40">
+      <td class="py-3 px-4 text-slate-300">${escapeHtml(u.full_name || '--')}</td>
+      <td class="py-3 px-4 font-mono text-white">${escapeHtml(maskEmail(u.email))}</td>
+      <td class="py-3 px-4 font-mono text-slate-400" title="${escapeHtml(u.install_id || '')}">${escapeHtml(shortInstallId(u.install_id))}</td>
+      <td class="py-3 px-4 mono text-emerald-400">${(u.tts_chars_today || 0).toLocaleString()}</td>
+      <td class="py-3 px-4 mono text-white" title="${escapeHtml(limitsTitle)}">${(u.daily_tts_char_limit || 0).toLocaleString()}/ngày · ${u.rate_limit_requests_per_minute || 0} rpm</td>
+      <td class="py-3 px-4 mono text-amber-400">${(u.bonus_tts_chars || 0).toLocaleString()}</td>
+      <td class="py-3 px-4 text-right">
+        <button onclick="openEditAnonymousUserModal('${escapeHtml(u.id)}')" class="text-indigo-400 hover:text-indigo-300 mr-3" title="Chỉnh sửa hạn mức">
+          <i class="fa-solid fa-pen-to-square"></i>
+        </button>
+        <button onclick="deleteAnonymousUser('${escapeHtml(u.id)}')" class="text-rose-400 hover:text-rose-300" title="Xóa tài khoản">
+          <i class="fa-solid fa-trash-can"></i>
+        </button>
+      </td>
+    </tr>
+  `;
+  }).join('');
+}
+
+function openEditAnonymousUserModal(userId) {
+  const user = allAnonymousUsersData.find(u => u.id === userId);
+  const modal = document.getElementById('editAnonymousUserModal');
+  if (!user || !modal) return;
+
+  document.getElementById('editAnonymousUserIdInput').value = user.id || '';
+  document.getElementById('editAnonymousEmailLabel').textContent = user.email ? maskEmail(user.email) : shortInstallId(user.install_id);
+  document.getElementById('editAnonymousFullNameInput').value = user.full_name || '';
+  document.getElementById('editAnonymousDailyLimitInput').value = user.daily_tts_char_limit ?? 50000;
+  document.getElementById('editAnonymousRateLimitInput').value = user.rate_limit_requests_per_minute ?? 60;
+  document.getElementById('editAnonymousSpeechLimitInput').value = user.max_speech_char_limit ?? 2000;
+  document.getElementById('editAnonymousPreviewLimitInput').value = user.max_preview_char_limit ?? 250;
+  document.getElementById('editAnonymousConcurrentInput').value = user.max_concurrent_tts ?? 1;
+  document.getElementById('editAnonymousQueueInput').value = user.max_queue_waiters ?? 1;
+
+  modal.classList.remove('hidden');
+}
+
+function closeEditAnonymousUserModal() {
+  document.getElementById('editAnonymousUserModal')?.classList.add('hidden');
+}
+
+async function submitEditAnonymousUser() {
+  const id = document.getElementById('editAnonymousUserIdInput')?.value;
+  const fullName = (document.getElementById('editAnonymousFullNameInput')?.value || '').trim();
+  const daily = parseInt(document.getElementById('editAnonymousDailyLimitInput')?.value || '50000', 10);
+  const rate = parseInt(document.getElementById('editAnonymousRateLimitInput')?.value || '60', 10);
+  const speech = parseInt(document.getElementById('editAnonymousSpeechLimitInput')?.value || '2000', 10);
+  const preview = parseInt(document.getElementById('editAnonymousPreviewLimitInput')?.value || '250', 10);
+  const concurrent = parseInt(document.getElementById('editAnonymousConcurrentInput')?.value || '1', 10);
+  const queueVal = document.getElementById('editAnonymousQueueInput')?.value;
+  const queue = queueVal !== '' && queueVal !== undefined ? parseInt(queueVal, 10) : 1;
+
+  // Anonymous accounts never accept max_cloned_slots; omit an empty name too
+  // because the API requires full_name to be at least one character.
+  const body = {
+    daily_tts_char_limit: daily,
+    rate_limit_requests_per_minute: rate,
+    max_speech_char_limit: speech,
+    max_preview_char_limit: preview,
+    max_concurrent_tts: concurrent,
+    max_queue_waiters: queue,
+  };
+  if (fullName) body.full_name = fullName;
+
+  try {
+    const res = await apiRequest(`/v1/management/anonymous-users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      showToast('Cập nhật tài khoản ẩn danh thành công!', 'success');
+      closeEditAnonymousUserModal();
+      fetchAnonymousUsers();
+    } else {
+      showToast('Không thể cập nhật tài khoản ẩn danh!', 'error');
+    }
+  } catch (e) {
+    showToast('Lỗi cập nhật tài khoản ẩn danh!', 'error');
+  }
+}
+
+async function deleteAnonymousUser(userId) {
+  const user = allAnonymousUsersData.find(u => u.id === userId);
+  const label = user
+    ? (user.full_name || (user.email ? maskEmail(user.email) : '') || shortInstallId(user.install_id))
+    : userId;
+  if (!confirm(`Bạn có chắc chắn muốn xóa tài khoản ẩn danh ${label}?`)) return;
+  try {
+    const res = await apiRequest(`/v1/management/anonymous-users/${userId}`, { method: 'DELETE' });
+    if (res.ok) {
+      showToast('Đã xóa tài khoản ẩn danh!', 'success');
+      fetchAnonymousUsers();
+    } else {
+      showToast('Không thể xóa tài khoản ẩn danh!', 'error');
+    }
+  } catch (e) {
+    showToast('Lỗi khi xóa tài khoản ẩn danh', 'error');
   }
 }
 
