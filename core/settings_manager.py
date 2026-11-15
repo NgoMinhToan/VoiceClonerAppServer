@@ -22,6 +22,8 @@ class ServerConfig(BaseModel):
 class SecurityConfig(BaseModel):
     management_key: str = Field("vc_admin_secret_key_123", description="Key xác thực quản trị (Admin/Management API & Dashboard)")
     require_client_api_key: bool = Field(True, description="Bắt buộc client app/web phải có Client API Key")
+    anonymous_signup_per_ip_per_day: int = Field(10, ge=0, description="Số tài khoản ẩn danh tối đa mỗi IP được tạo mỗi ngày")
+    trust_forwarded_for: bool = Field(False, description="Tin cậy header X-Forwarded-For khi xác định IP client")
 
 
 class ClientApiKeyConfig(BaseModel):
@@ -61,6 +63,28 @@ class DefaultUserLimitsConfig(BaseModel):
     max_queue_waiters: int = Field(1, ge=0, le=256)
 
 
+class DefaultAnonymousLimitsConfig(BaseModel):
+    max_cloned_slots: int = Field(0, ge=0, le=100)
+    daily_tts_char_limit: int = Field(50000, ge=1000)
+    rate_limit_requests_per_minute: int = Field(60, ge=1, le=1000)
+    max_speech_char_limit: int = Field(2000, ge=100, le=10000)
+    max_preview_char_limit: int = Field(250, ge=10, le=5000)
+    max_concurrent_tts: int = Field(1, ge=1, le=64)
+    max_queue_waiters: int = Field(1, ge=0, le=256)
+
+
+class AdRewardsConfig(BaseModel):
+    enabled: bool = Field(False, description="Bật/tắt phần thưởng quảng cáo")
+    chars_per_ad: int = Field(1000, ge=1, le=100000, description="Số ký tự TTS được cộng cho mỗi quảng cáo xem xong")
+    max_ads_per_user_per_day: int = Field(10, ge=0, le=1000, description="Số quảng cáo tối đa mỗi người dùng mỗi ngày")
+    rewarded_ad_unit_id: str = Field("", description="AdMob rewarded ad unit ID")
+    allowed_ad_unit_ids: List[str] = Field(default_factory=list, description="Danh sách ad unit ID được chấp nhận")
+    ssv_verifier_url: str = Field(
+        "https://www.gstatic.com/admob/reward/verifier-keys.json",
+        description="URL chứa public key để xác thực server-side verification callback",
+    )
+
+
 class AudioCacheConfig(BaseModel):
     max_size_mb: int = Field(2048, ge=64)
     ttl_days: int = Field(7, ge=1)
@@ -73,6 +97,8 @@ class AppSettings(BaseModel):
     client_api_keys: List[ClientApiKeyConfig] = Field(default_factory=list)
     model_workers: List[ModelWorkerConfig] = Field(default_factory=list)
     default_user_limits: DefaultUserLimitsConfig = Field(default_factory=DefaultUserLimitsConfig)
+    default_anonymous_limits: DefaultAnonymousLimitsConfig = Field(default_factory=DefaultAnonymousLimitsConfig)
+    ad_rewards: AdRewardsConfig = Field(default_factory=AdRewardsConfig)
     concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
     audio_cache: AudioCacheConfig = Field(default_factory=AudioCacheConfig)
 
