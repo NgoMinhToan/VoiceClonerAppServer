@@ -42,6 +42,7 @@ def _migrate_schema(sync_conn):
         "max_preview_char_limit": "INTEGER NOT NULL DEFAULT 250",
         "max_concurrent_tts": "INTEGER NOT NULL DEFAULT 1",
         "max_queue_waiters": "INTEGER NOT NULL DEFAULT 1",
+        "bonus_tts_chars": "INTEGER NOT NULL DEFAULT 0",
     }
 
     # 1. PostgreSQL Schema Migration
