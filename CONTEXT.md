@@ -20,6 +20,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 | `api/management.py` | Keys, workers, settings, users, metrics, cache purge |
 | `api/system.py` | Health and system status |
 | `core/security.py` | JWT dependencies, management key, client key |
+| `core/accounts.py` | Account union of `User` and `AnonymousUser`, account-type helpers, typed account lookup |
 | `core/redis_client.py` | Daily quota, sliding-window rate limit, token blacklist |
 | `core/settings_manager.py` | Pydantic settings, disk watcher, change hooks |
 | `services/model_dispatcher.py` | Health state, breaker, capability filtering, utilization routing |
@@ -33,6 +34,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 ## 3. Security and Limits
 
 - 3-tier keys plus user JWTs. All `/v1/*` client routes require an active client key; management routes require the management key; speech, preview, and clone require a user token.
+- Access tokens carry an `acct` claim (`user` or `anonymous`) and resolve against `users` or `anonymous_users`; refresh preserves `acct`, and legacy tokens without the claim are treated as normal users.
 - Access tokens 15 minutes, refresh tokens 7 days; revoked tokens are blacklisted in Redis.
 - Default per-user limits: 3 cloned slots, 50,000 chars/day, 60 requests/minute, 2,000 chars per speech, 250 chars per preview, 1 concurrent stream, 1 queue waiter.
 - Limits are copied onto each user row at registration and editable per user through the dashboard or `PATCH /v1/management/users/{id}`.
@@ -76,4 +78,4 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 pytest tests/ -v
 ```
 
-Current suite: 116 tests across 20 modules. Run before every commit; the pre-push hook does the same.
+Current suite: 131 tests across 23 modules. Run before every commit; the pre-push hook does the same.

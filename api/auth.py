@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from VoiceClonerAppServer.core.accounts import get_account_by_id
 from VoiceClonerAppServer.core.database import get_db
 from VoiceClonerAppServer.core.redis_client import (
     blacklist_token,
@@ -198,17 +199,16 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
         payload = decode_token(req.refresh_token)
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ")
-        user_id = payload.get("sub")
+        account_id = payload.get("sub")
+        account_type = payload.get("acct", "user")
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ hoặc đã hết hạn")
 
-    stmt = select(User).where(User.id == user_id)
-    res = await db.execute(stmt)
-    user = res.scalar_one_or_none()
-    if not user:
+    account = await get_account_by_id(db, account_id, account_type)
+    if not account:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Người dùng không tồn tại")
 
-    new_access_token = create_access_token(user.id)
+    new_access_token = create_access_token(account.id, account_type=account_type)
     return RefreshTokenResponse(access_token=new_access_token, token_type="bearer")
 
 

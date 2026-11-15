@@ -9,15 +9,14 @@ from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from VoiceClonerAppServer.core.accounts import Account, get_account_by_id
 from VoiceClonerAppServer.core.database import get_db
 from VoiceClonerAppServer.core.settings_manager import (
     ClientApiKeyConfig,
     settings_manager,
 )
-from VoiceClonerAppServer.models.db_models import User
 
 # Passlib compatibility fix for bcrypt >= 4.0.0
 if not hasattr(bcrypt, "__about__"):
@@ -53,24 +52,34 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_access_token(subject: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    subject: str,
+    account_type: str = "user",
+    expires_delta: Optional[timedelta] = None,
+) -> str:
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode = {
         "sub": subject,
         "type": "access",
+        "acct": account_type,
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
     }
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(subject: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_refresh_token(
+    subject: str,
+    account_type: str = "user",
+    expires_delta: Optional[timedelta] = None,
+) -> str:
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS))
     to_encode = {
         "sub": subject,
         "type": "refresh",
+        "acct": account_type,
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
     }
@@ -99,8 +108,8 @@ def verify_google_id_token(token_str: str) -> Optional[Dict[str, Any]]:
 async def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
-) -> User:
-    """Dependency: Extract and validate user from JWT Bearer token."""
+) -> Account:
+    """Dependency: Extract and validate the account referenced by a JWT Bearer token."""
     from VoiceClonerAppServer.core.redis_client import is_token_blacklisted
 
     if not token:
@@ -121,8 +130,9 @@ async def get_current_user(
         payload = decode_token(token)
         if payload.get("type") != "access":
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ")
-        user_id: str = payload.get("sub")
-        if not user_id:
+        account_id: str = payload.get("sub")
+        account_type: str = payload.get("acct", "user")
+        if not account_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ")
     except JWTError:
         raise HTTPException(
@@ -131,18 +141,16 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    stmt = select(User).where(User.id == user_id)
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-    if not user:
+    account = await get_account_by_id(db, account_id, account_type)
+    if not account:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Người dùng không tồn tại")
-    return user
+    return account
 
 
 async def get_optional_user(
     token: Optional[str] = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
-) -> Optional[User]:
+) -> Optional[Account]:
     """Dependency: Extract user if token present and valid; return None if unauthenticated."""
     if not token:
         return None
