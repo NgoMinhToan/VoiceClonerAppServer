@@ -15,7 +15,13 @@ from VoiceClonerAppServer.core.settings_manager import (
 from VoiceClonerAppServer.core.database import AsyncSessionLocal
 from VoiceClonerAppServer.core.redis_client import get_daily_usage
 from VoiceClonerAppServer.core.security import verify_management_key
-from VoiceClonerAppServer.models.db_models import DailyUsage, User, Voice
+from VoiceClonerAppServer.models.db_models import (
+    AnonymousDailyUsage,
+    AnonymousUser,
+    DailyUsage,
+    User,
+    Voice,
+)
 from VoiceClonerAppServer.services.cache_service import cache_service
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 from VoiceClonerAppServer.services.usage_tracker import usage_tracker
@@ -398,3 +404,106 @@ async def delete_user(user_id: str):
         await session.delete(user)
         await session.commit()
         return {"status": "success", "message": f"User {user_id} deleted"}
+
+
+# ── ANONYMOUS USER MANAGEMENT ENDPOINTS ──
+
+@router.get("/anonymous-users")
+async def list_anonymous_users():
+    """List anonymous install accounts with bonus balance and today's TTS usage."""
+    today = datetime.now(timezone.utc).date()
+    default_limits = settings_manager.get_settings().default_anonymous_limits
+    async with AsyncSessionLocal() as session:
+        query = select(AnonymousUser).order_by(desc(AnonymousUser.created_at)).limit(100)
+        res = await session.execute(query)
+        users = res.scalars().all()
+
+        results = []
+        for u in users:
+            # Query usage today from Redis (real-time) with DB fallback
+            chars_today = await get_daily_usage(u.id)
+            if not chars_today:
+                usage_query = select(AnonymousDailyUsage.tts_characters_used).where(
+                    AnonymousDailyUsage.user_id == u.id,
+                    AnonymousDailyUsage.usage_date == today,
+                )
+                usage_res = await session.execute(usage_query)
+                chars_today = usage_res.scalar_one_or_none() or 0
+
+            results.append({
+                "id": u.id,
+                "install_id": u.install_id,
+                "email": u.email,
+                "full_name": u.full_name,
+                "auth_provider": u.auth_provider,
+                "avatar_url": u.avatar_url,
+                "max_cloned_slots": u.max_cloned_slots if u.max_cloned_slots is not None else default_limits.max_cloned_slots,
+                "daily_tts_char_limit": u.daily_tts_char_limit if u.daily_tts_char_limit is not None else default_limits.daily_tts_char_limit,
+                "rate_limit_requests_per_minute": u.rate_limit_requests_per_minute if u.rate_limit_requests_per_minute is not None else default_limits.rate_limit_requests_per_minute,
+                "max_speech_char_limit": u.max_speech_char_limit if u.max_speech_char_limit is not None else default_limits.max_speech_char_limit,
+                "max_preview_char_limit": u.max_preview_char_limit if u.max_preview_char_limit is not None else default_limits.max_preview_char_limit,
+                "max_concurrent_tts": u.max_concurrent_tts if u.max_concurrent_tts is not None else default_limits.max_concurrent_tts,
+                "max_queue_waiters": u.max_queue_waiters if u.max_queue_waiters is not None else default_limits.max_queue_waiters,
+                "bonus_tts_chars": u.bonus_tts_chars,
+                "tts_chars_today": chars_today,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+            })
+        return results
+
+
+@router.patch("/anonymous-users/{user_id}")
+async def update_anonymous_user(user_id: str, payload: UpdateUserRequest):
+    """Update an anonymous account's quota or profile. Clone slots are immutable."""
+    async with AsyncSessionLocal() as session:
+        user = await session.get(AnonymousUser, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Anonymous user not found")
+
+        if payload.max_cloned_slots is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Anonymous accounts do not support cloned voices",
+            )
+
+        if payload.daily_tts_char_limit is not None:
+            user.daily_tts_char_limit = payload.daily_tts_char_limit
+        if payload.rate_limit_requests_per_minute is not None:
+            user.rate_limit_requests_per_minute = payload.rate_limit_requests_per_minute
+        if payload.max_speech_char_limit is not None:
+            user.max_speech_char_limit = payload.max_speech_char_limit
+        if payload.max_preview_char_limit is not None:
+            user.max_preview_char_limit = payload.max_preview_char_limit
+        if payload.max_concurrent_tts is not None:
+            user.max_concurrent_tts = payload.max_concurrent_tts
+        if payload.max_queue_waiters is not None:
+            user.max_queue_waiters = payload.max_queue_waiters
+        if payload.full_name is not None:
+            user.full_name = payload.full_name
+
+        await session.commit()
+        await session.refresh(user)
+        return {
+            "status": "success",
+            "id": user.id,
+            "full_name": user.full_name,
+            "max_cloned_slots": user.max_cloned_slots,
+            "daily_tts_char_limit": user.daily_tts_char_limit,
+            "rate_limit_requests_per_minute": user.rate_limit_requests_per_minute,
+            "max_speech_char_limit": user.max_speech_char_limit,
+            "max_preview_char_limit": user.max_preview_char_limit,
+            "max_concurrent_tts": user.max_concurrent_tts,
+            "max_queue_waiters": user.max_queue_waiters,
+        }
+
+
+@router.delete("/anonymous-users/{user_id}")
+async def delete_anonymous_user(user_id: str):
+    """Delete an anonymous account and its daily usage rows."""
+    async with AsyncSessionLocal() as session:
+        user = await session.get(AnonymousUser, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Anonymous user not found")
+
+        await session.delete(user)
+        await session.commit()
+        return {"status": "success", "message": f"Anonymous user {user_id} deleted"}
