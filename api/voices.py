@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from VoiceClonerAppServer.core.accounts import ACCOUNT_TYPE_ANONYMOUS, account_type_of
 from VoiceClonerAppServer.core.database import get_db
 from VoiceClonerAppServer.core.security import get_current_user, get_optional_user
 from VoiceClonerAppServer.models.db_models import User, Voice, utc_now
@@ -172,6 +173,13 @@ async def clone_voice(
     """
     if not audio_file.filename:
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp tệp âm thanh hợp lệ.")
+
+    # Anonymous install accounts cannot clone voices; checked before slot quota.
+    if account_type_of(current_user) == ACCOUNT_TYPE_ANONYMOUS:
+        raise HTTPException(
+            status_code=403,
+            detail="Tài khoản khách không hỗ trợ clone giọng. Vui lòng đăng nhập.",
+        )
 
     # 1. Quota check
     res = await db.execute(select(func.count(Voice.id)).where(Voice.user_id == current_user.id))

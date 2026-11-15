@@ -1,4 +1,5 @@
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
@@ -32,6 +33,18 @@ class GoogleAuthRequest(BaseModel):
     id_token: str
 
 
+class AnonymousAuthRequest(BaseModel):
+    install_id: str
+
+    @field_validator("install_id")
+    @classmethod
+    def validate_install_id(cls, v: str) -> str:
+        try:
+            return str(uuid.UUID(v.strip()))
+        except (AttributeError, TypeError, ValueError):
+            raise ValueError("install_id phải là UUID hợp lệ")
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
@@ -55,6 +68,7 @@ class UserResponse(BaseModel):
     max_preview_char_limit: int = 250
     max_concurrent_tts: int = 1
     max_queue_waiters: int = 1
+    bonus_tts_chars: int = 0
 
 
 class TokenResponse(BaseModel):
@@ -85,6 +99,7 @@ class UserProfileResponse(BaseModel):
     max_preview_char_limit: int = 250
     max_concurrent_tts: int = 1
     max_queue_waiters: int = 1
+    bonus_tts_chars: int = 0
 
 
 # ---------------------------------------------------------------------------

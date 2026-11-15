@@ -23,6 +23,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 | `core/accounts.py` | Account union of `User` and `AnonymousUser`, account-type helpers, typed account lookup |
 | `core/redis_client.py` | Daily quota, sliding-window rate limit, token blacklist |
 | `core/settings_manager.py` | Pydantic settings, disk watcher, change hooks |
+| `services/anonymous_service.py` | Anonymous install-account lookup/creation and per-IP daily signup rate limit |
 | `services/model_dispatcher.py` | Health state, breaker, capability filtering, utilization routing |
 | `services/voice_service.py` | Dynamic discovery and catalog aggregation |
 | `services/cache_service.py` | Standard and unbilled cache lifecycle |
@@ -35,6 +36,9 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 
 - 3-tier keys plus user JWTs. All `/v1/*` client routes require an active client key; management routes require the management key; speech, preview, and clone require a user token.
 - Access tokens carry an `acct` claim (`user` or `anonymous`) and resolve against `users` or `anonymous_users`; refresh preserves `acct`, and legacy tokens without the claim are treated as normal users.
+- Anonymous install accounts are created/resumed by `POST /v1/auth/anonymous` from a client-generated UUID `install_id`. New accounts use `default_anonymous_limits` with `max_cloned_slots = 0`; profile responses expose `bonus_tts_chars`.
+- Anonymous signups are rate-limited per IP per business day (`anon_signup:{ip}:{date}` in Redis, `anonymous_signup_per_ip_per_day`); only new accounts count, and `X-Forwarded-For` is honored only when `trust_forwarded_for` is enabled.
+- Anonymous accounts cannot clone voices: `POST /v1/voices/clone` returns 403 before the slot check.
 - Access tokens 15 minutes, refresh tokens 7 days; revoked tokens are blacklisted in Redis.
 - Default per-user limits: 3 cloned slots, 50,000 chars/day, 60 requests/minute, 2,000 chars per speech, 250 chars per preview, 1 concurrent stream, 1 queue waiter.
 - Limits are copied onto each user row at registration and editable per user through the dashboard or `PATCH /v1/management/users/{id}`.
@@ -78,4 +82,4 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 pytest tests/ -v
 ```
 
-Current suite: 131 tests across 23 modules. Run before every commit; the pre-push hook does the same.
+Current suite: 140 tests across 24 modules. Run before every commit; the pre-push hook does the same.
