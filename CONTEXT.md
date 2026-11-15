@@ -78,7 +78,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 - `/dashboard` is a 7-tab dark console: Overview, Analysis, Realtime, Request Events, Voice Workers, API Keys, Settings.
 - Metrics are backed by `api_usage_logs` and `/v1/management/metrics/{summary,analysis}`.
 - Calendar day bounds honor a client timezone offset; the activity heatmap maps requests to discrete time blocks.
-- Settings edits ad rewards (enabled, chars per ad, daily ad cap, rewarded/allowed ad unit IDs, SSV verifier URL) and default anonymous limits; anonymous clone slots are fixed and shown disabled at 0.
+- Settings edits ad rewards (enabled, chars per ad, daily ad cap where `0` disables all rewards, rewarded/allowed ad unit IDs, SSV verifier URL) and default anonymous limits; anonymous clone slots are fixed and shown disabled at 0.
 - The anonymous accounts table lists masked email, install ID, today's usage, limits, and bonus characters. Edit sends `full_name` plus per-account limits (never `max_cloned_slots`); Delete removes the account.
 
 ## 7. Known Constraints and Gaps
