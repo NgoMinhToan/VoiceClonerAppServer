@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from VoiceClonerAppServer.core.database import init_db
+from VoiceClonerAppServer.core.settings_manager import settings_manager
 from VoiceClonerAppServer.main import app
 
 client = TestClient(
@@ -25,7 +26,9 @@ def test_me_and_balance_include_bonus():
     balance = client.get("/v1/tokens/balance", headers=headers)
     assert me.status_code == 200 and me.json()["bonus_tts_chars"] == 0
     assert balance.status_code == 200
+    expected_limit = settings_manager.get_settings().default_anonymous_limits.daily_tts_char_limit
     assert balance.json() == {
         "bonus_tts_chars": 0, "daily_tts_chars_used": 0,
-        "daily_tts_chars_limit": 50000, "daily_tts_chars_remaining": 50000,
+        "daily_tts_chars_limit": expected_limit,
+        "daily_tts_chars_remaining": expected_limit,
     }
