@@ -99,19 +99,34 @@ async def update_settings(
     updates = payload.model_dump(exclude_unset=True)
     security_update = updates.get("security") or {}
     requested_key = security_update.get("management_key")
-    current_key = settings_manager.get_effective_management_key()
-    if requested_key is not None and requested_key != current_key:
-        if not requested_key.strip():
+    if requested_key is not None:
+        if not isinstance(requested_key, str):
+            raise HTTPException(
+                status_code=422,
+                detail="management_key must be a string",
+            )
+        requested_key = requested_key.strip()
+        current_key = settings_manager.get_effective_management_key()
+        if not requested_key or requested_key == current_key:
+            # Blank or unchanged: never persist the effective management key.
             security_update.pop("management_key", None)
+        elif settings_manager.management_key_source == "environment":
+            # The environment key must never be written to disk, even if the
+            # caller submits a value that happens to match it.
+            security_update.pop("management_key", None)
+            if principal == "dashboard-session":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Rotate the management key with X-Management-Key or the environment",
+                )
+            raise HTTPException(
+                status_code=409,
+                detail="Management key is managed by the environment",
+            )
         elif principal == "dashboard-session":
             raise HTTPException(
                 status_code=403,
                 detail="Rotate the management key with X-Management-Key or the environment",
-            )
-        elif settings_manager.management_key_source == "environment":
-            raise HTTPException(
-                status_code=409,
-                detail="Management key is managed by the environment",
             )
     settings_manager.update_settings(updates)
     return serialize_settings(settings_manager.get_settings())

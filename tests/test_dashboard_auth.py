@@ -165,3 +165,45 @@ def test_cookie_mutation_requires_csrf_header():
     _login()
     res = client.put("/v1/management/settings", json={"server": {"port": 8000}})
     assert res.status_code == 403
+
+
+def test_env_key_equal_value_is_not_written_to_disk():
+    import json
+
+    def _on_disk_key():
+        with open(settings_manager._path, "r", encoding="utf-8") as f:
+            return json.load(f)["security"]["management_key"]
+
+    before = _on_disk_key()
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": KEY}},
+    )
+    assert res.status_code == 200
+    assert _on_disk_key() == before
+
+
+def test_non_string_management_key_returns_422():
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": 123}},
+    )
+    assert res.status_code == 422
+
+
+def test_whitespace_padded_key_is_treated_as_unchanged(monkeypatch):
+    _login()
+    monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
+    monkeypatch.setattr(settings_manager, "_env_management_key", "")
+    settings_manager._settings.security.management_key = KEY
+    monkeypatch.setattr(settings_manager, "_save_to_disk", lambda: None)
+
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": f" {KEY} "}},
+    )
+    assert res.status_code == 200
+    assert settings_manager._settings.security.management_key == KEY
