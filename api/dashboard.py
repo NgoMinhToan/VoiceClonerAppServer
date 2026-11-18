@@ -21,6 +21,8 @@ router = APIRouter(prefix="/v1/dashboard", tags=["Dashboard"])
 LOGIN_MAX_ATTEMPTS = 10
 LOGIN_WINDOW_SECONDS = 300
 
+NO_STORE_HEADERS = {"Cache-Control": "no-store"}
+
 
 class DashboardLoginRequest(BaseModel):
     key: str = Field(..., min_length=1, max_length=512)
@@ -51,14 +53,18 @@ async def login(
     """Exchange the management key for a signed, HttpOnly session cookie."""
     configured = settings_manager.get_effective_management_key()
     if not configured:
-        raise HTTPException(status_code=503, detail="Management key is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Management key is not configured",
+            headers=dict(NO_STORE_HEADERS),
+        )
 
     ip = resolve_client_ip(request)
     if await _attempts(ip) >= LOGIN_MAX_ATTEMPTS:
         raise HTTPException(
             status_code=429,
             detail="Too many login attempts",
-            headers={"Retry-After": str(LOGIN_WINDOW_SECONDS)},
+            headers={**NO_STORE_HEADERS, "Retry-After": str(LOGIN_WINDOW_SECONDS)},
         )
 
     # Compare UTF-8 bytes so non-ASCII input yields 401 instead of TypeError.
@@ -66,7 +72,11 @@ async def login(
         payload.key.strip().encode("utf-8"), configured.encode("utf-8")
     ):
         await _record_failure(ip)
-        raise HTTPException(status_code=401, detail="Invalid management key")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid management key",
+            headers=dict(NO_STORE_HEADERS),
+        )
 
     await redis_client.delete(f"dashboard_login:{ip}")
     token = create_dashboard_session_token(configured)
@@ -89,7 +99,11 @@ async def status(request: Request, response: Response):
     configured = settings_manager.get_effective_management_key()
     token = request.cookies.get(DASHBOARD_SESSION_COOKIE, "")
     if not configured or not verify_dashboard_session_token(token, configured):
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers=dict(NO_STORE_HEADERS),
+        )
     response.headers["Cache-Control"] = "no-store"
     return {"authenticated": True}
 
@@ -97,6 +111,6 @@ async def status(request: Request, response: Response):
 @router.delete("/session")
 async def logout():
     """Clear the dashboard session cookie."""
-    out = Response(status_code=204)
+    out = Response(status_code=204, headers=dict(NO_STORE_HEADERS))
     out.delete_cookie(DASHBOARD_SESSION_COOKIE, path="/")
     return out

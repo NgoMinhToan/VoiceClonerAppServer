@@ -84,3 +84,21 @@ def test_login_fails_closed_when_key_unset(monkeypatch):
 def test_login_with_non_ascii_key_returns_401_not_500():
     res = client.post("/v1/dashboard/session", json={"key": "khóa-mật-khẩu"})
     assert res.status_code == 401
+
+
+def test_session_endpoints_always_send_no_store():
+    wrong = client.post("/v1/dashboard/session", json={"key": "wrong"})
+    assert wrong.status_code == 401
+    assert wrong.headers["cache-control"] == "no-store"
+
+    login = client.post("/v1/dashboard/session", json={"key": KEY})
+    assert login.status_code == 200
+    assert login.headers["cache-control"] == "no-store"
+
+    logout = client.delete("/v1/dashboard/session")
+    assert logout.status_code == 204
+    assert logout.headers["cache-control"] == "no-store"
+
+    status = client.get("/v1/dashboard/session")
+    assert status.status_code == 401
+    assert status.headers["cache-control"] == "no-store"
