@@ -193,6 +193,15 @@ def test_non_string_management_key_returns_422():
     assert res.status_code == 422
 
 
+def test_null_management_key_returns_422():
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": None}},
+    )
+    assert res.status_code == 422
+
+
 def test_whitespace_padded_key_is_treated_as_unchanged(monkeypatch):
     _login()
     monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))

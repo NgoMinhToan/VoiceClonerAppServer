@@ -99,7 +99,7 @@ async def update_settings(
     updates = payload.model_dump(exclude_unset=True)
     security_update = updates.get("security") or {}
     requested_key = security_update.get("management_key")
-    if requested_key is not None:
+    if "management_key" in security_update:
         if not isinstance(requested_key, str):
             raise HTTPException(
                 status_code=422,
