@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import secrets
@@ -42,6 +43,8 @@ JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+
+logger = logging.getLogger(__name__)
 
 
 def hash_password(password: str) -> str:
@@ -101,7 +104,9 @@ def verify_google_id_token(token_str: str) -> Optional[Dict[str, Any]]:
             audience=audience,
         )
         return id_info
-    except Exception:
+    except Exception as exc:
+        # Never log the token itself; the message is what identifies misconfiguration.
+        logger.warning("Google ID token verification failed: %s: %s", type(exc).__name__, exc)
         return None
 
 
