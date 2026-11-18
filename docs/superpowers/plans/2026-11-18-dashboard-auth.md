@@ -118,14 +118,14 @@ In `core/settings_manager.py`:
 ```python
 def get_effective_management_key(self) -> str:
     self._check_and_reload()
-    return self._env_management_key or self._settings.security.management_key
+    return self._env_management_key or self._settings.security.management_key.strip()
 
 @property
 def management_key_source(self) -> str:
     self._check_and_reload()
     if self._env_management_key:
         return "environment"
-    return "config" if self._settings.security.management_key else "unset"
+    return "config" if self._settings.security.management_key.strip() else "unset"
 ```
 
 `_check_and_reload()` is required so an on-disk key change invalidates sessions through the `kv` claim.
@@ -640,6 +640,16 @@ Expected: FAIL (unauthenticated `/dashboard` returns `200`; `/dashboard/login` i
 - [ ] **Step 3: Implement the routes and login page**
 
 In `main.py` replace the `/dashboard` handler with two routes using `has_valid_dashboard_session` and `RedirectResponse(status_code=303)`; serve `login.html` from `DASHBOARD_DIR`; include `headers={"Cache-Control": "no-store"}` on both HTML responses. Keep `/` redirecting to `/dashboard`.
+
+In the `lifespan` function, after `settings = settings_manager.get_settings()`, add one startup warning when the effective key is empty, without printing the key:
+
+```python
+if not settings.security.management_key:
+    logger.warning(
+        "Management key is not configured; the dashboard is locked. "
+        "Set MANAGEMENT_KEY or security.management_key."
+    )
+```
 
 Create `static/dashboard/login.html` with a dark card consistent with the console: a form (`id="loginForm"`), password input (`id="loginKeyInput"`), error paragraph (`id="loginError"`), and inline script:
 

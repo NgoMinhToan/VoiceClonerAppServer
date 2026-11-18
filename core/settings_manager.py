@@ -198,14 +198,14 @@ class SettingsManager:
 
     def get_effective_management_key(self) -> str:
         self._check_and_reload()
-        return self._env_management_key or self._settings.security.management_key
+        return self._env_management_key or (self._settings.security.management_key or "").strip()
 
     @property
     def management_key_source(self) -> str:
         self._check_and_reload()
         if self._env_management_key:
             return "environment"
-        return "config" if self._settings.security.management_key else "unset"
+        return "config" if (self._settings.security.management_key or "").strip() else "unset"
 
     def update_settings(self, updates: Dict[str, Any]) -> AppSettings:
         self._check_and_reload()

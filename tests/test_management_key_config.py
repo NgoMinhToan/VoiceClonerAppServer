@@ -38,3 +38,11 @@ def test_config_key_reports_config_source(tmp_path, monkeypatch):
     sm = SettingsManager(settings_path=cfg)
     assert sm.get_effective_management_key() == "file_secret_key"
     assert sm.management_key_source == "config"
+
+
+def test_whitespace_only_config_key_counts_as_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("MANAGEMENT_KEY", raising=False)
+    cfg = _write_config(tmp_path, "   \t  ")
+    sm = SettingsManager(settings_path=cfg)
+    assert sm.get_effective_management_key() == ""
+    assert sm.management_key_source == "unset"
