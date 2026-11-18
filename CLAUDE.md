@@ -5,8 +5,8 @@ Guidance for AI agents working in the gateway repository.
 ## Architecture
 
 - `main.py` — FastAPI app, lifespan (DB init, discovery, health monitor), PNA middleware, client-key middleware, static dashboard mount.
-- `api/` — `auth.py`, `voices.py`, `speech.py`, `management.py`, `system.py`.
-- `core/` — `database.py`, `redis_client.py` (quota/rate limit/blacklist), `settings_manager.py` (hot reload), `security.py` (JWT and key dependencies).
+- `api/` — `auth.py`, `voices.py`, `speech.py`, `management.py`, `system.py`, `dashboard.py` (session login/logout router).
+- `core/` — `database.py`, `redis_client.py` (quota/rate limit/blacklist), `settings_manager.py` (hot reload), `security.py` (JWT, key dependencies, and the dashboard session-cookie dependency).
 - `services/` — dispatcher, voice discovery, cache, singleflight, per-user limiter, clone reference, usage tracker.
 - `models/` — SQLAlchemy models and Pydantic schemas.
 - `config/settings.json` — runtime source of truth for keys, workers, limits, cache.

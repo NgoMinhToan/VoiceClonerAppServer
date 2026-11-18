@@ -112,15 +112,12 @@ def test_dashboard_js_uses_cookie_session_only():
     assert "/dashboard/login" in js
 
 
-
-
-
-
 def test_no_hardcoded_management_key_in_static_files():
     from pathlib import Path
     root = Path("VoiceClonerAppServer/static")
     if not root.exists():
         root = Path("static")
+    assert root.is_dir()
     for path in root.rglob("*"):
         if path.is_file():
             text = path.read_text(encoding="utf-8", errors="ignore")

@@ -46,3 +46,22 @@ def test_whitespace_only_config_key_counts_as_unset(tmp_path, monkeypatch):
     sm = SettingsManager(settings_path=cfg)
     assert sm.get_effective_management_key() == ""
     assert sm.management_key_source == "unset"
+
+
+def test_legacy_default_key_in_config_is_treated_as_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("MANAGEMENT_KEY", raising=False)
+    cfg = _write_config(tmp_path, "vc_admin_secret_key_123")
+    sm = SettingsManager(settings_path=cfg)
+
+    assert sm.get_effective_management_key() == ""
+    assert sm.management_key_source == "unset"
+    assert sm.get_settings().security.management_key == ""
+
+
+def test_legacy_default_key_in_environment_is_treated_as_unset(tmp_path, monkeypatch):
+    monkeypatch.setenv("MANAGEMENT_KEY", "vc_admin_secret_key_123")
+    cfg = _write_config(tmp_path, "")
+    sm = SettingsManager(settings_path=cfg)
+
+    assert sm.get_effective_management_key() == ""
+    assert sm.management_key_source == "unset"

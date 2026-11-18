@@ -56,11 +56,11 @@ The console is not public: `/dashboard` redirects to `/dashboard/login` unless t
   python -c "import secrets; print(secrets.token_urlsafe(32))"
   ```
 - Set `DASHBOARD_COOKIE_SECURE=true` when the gateway is served over HTTPS so the cookie carries the `Secure` flag.
-- If the effective key is empty the dashboard fails closed: login and session checks return `503`, and `/dashboard` keeps redirecting to the login page.
-- Login attempts are rate limited per client IP (10 attempts per 5 minutes, then `429`).
-- The console cannot change the key. Rotating it is an operator action: update `MANAGEMENT_KEY` and restart the gateway (existing sessions become invalid because the cookie is signed with the key).
+- If the effective key is empty the dashboard fails closed: unkeyed login (`POST /v1/dashboard/session`) returns `503`, `GET /v1/dashboard/session` reports `401` (unauthenticated), and `/dashboard` keeps redirecting to the login page. The historical default `vc_admin_secret_key_123` is treated as unset.
+- Login attempts are rate limited per client IP: 10 failed attempts per 5 minutes, then `429`.
+- The console cannot change the key. When the key comes from `config/settings.json`, an operator can rotate it with `PUT /v1/management/settings` authenticated by `X-Management-Key`. When it comes from `MANAGEMENT_KEY`, update the environment variable and restart the gateway (existing sessions become invalid because the cookie is signed with the key).
 
-Migration note: deployments that still rely on the historical default key have no effective key configured and are locked out of the dashboard until an operator sets `MANAGEMENT_KEY` (or `security.management_key`). Browsers may still hold the obsolete `vc_management_key` `localStorage` entry; clearing it is safe — the key is never handled by the console anymore.
+Migration note: a config file that still holds the historical default `vc_admin_secret_key_123` is now locked out — that value is normalized to unset and cannot unlock the dashboard or management API. Set `MANAGEMENT_KEY` or replace `security.management_key` with a newly generated key. Browsers may still hold the obsolete `vc_management_key` `localStorage` entry; clearing it is safe — the key is never handled by the console anymore.
 
 ## Configuration
 

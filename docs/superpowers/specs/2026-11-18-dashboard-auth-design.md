@@ -196,6 +196,10 @@ New `static/dashboard/login.html` plus inline (or `login.js`) lightweight logic:
 - Startup logs one warning when the key is empty or still the historical default:
   `WARNING: management key is not configured; the dashboard is locked. Set MANAGEMENT_KEY or
   security.management_key.` It must not print the key.
+- The historical default `vc_admin_secret_key_123` is normalized to unset in
+  `get_effective_management_key()`, `management_key_source` (source becomes `"unset"`), and
+  `get_settings()`, so a stale config file cannot unlock the dashboard and the startup warning
+  fires.
 - `docker-compose.yml` (root and gateway-only): pass `MANAGEMENT_KEY: ${MANAGEMENT_KEY:-}` to
   the api service. README quickstart adds a generation command:
   `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
