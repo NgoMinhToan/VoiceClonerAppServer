@@ -26,7 +26,7 @@ allowing it.
 2. Successful login exchanges the management key for an `HttpOnly`, `SameSite=Strict` session
    cookie. The key itself is never returned to or persisted by the browser.
 3. `/v1/management/*` accepts either a valid session cookie (dashboard) or the existing
-   `X-Management-Key` header / `api_key` query (automation, scripts, tests).
+   `X-Management-Key` header / `management_key` query (automation, scripts, tests).
 4. Empty or default management keys fail closed: management endpoints return `503`, the login
    screen reports the server is not configured, and startup logs a warning.
 5. Rotating the management key invalidates all existing dashboard sessions.
@@ -133,7 +133,8 @@ All three send `Cache-Control: no-store`. The key is never echoed in responses o
 2. If a valid session cookie exists → return a sentinel principal (e.g. `"dashboard-session"`).
    For state-changing methods (`POST`, `PUT`, `PATCH`, `DELETE`) also require header
    `X-Dashboard-Request: 1`; otherwise `403`. This is the CSRF guard on top of `SameSite=Strict`.
-3. Else use `X-Management-Key` or `api_key` query with `secrets.compare_digest` as today.
+3. Else use `X-Management-Key` or the existing `management_key` query with
+   `secrets.compare_digest` as today.
 4. Else `401`.
 
 Because the dependency is on the management router, all existing routes inherit the behavior.
@@ -221,7 +222,7 @@ admin credential back to the browser and defeat goal 2. Therefore:
   behavior.
 - `PUT /v1/management/settings` handling of `security.management_key`:
   - omitted, empty, or the masked/redacted placeholder → treated as unchanged;
-  - non-empty and different, authenticated by `X-Management-Key`/`api_key`, no env override →
+  - non-empty and different, authenticated by `X-Management-Key`/`management_key` query, no env override →
     rotate the key. The request succeeds; the caller's old key stops working, all sessions are
     invalidated by the `kv` mismatch, and no cookie is issued;
   - non-empty and different, authenticated by session cookie → `403`

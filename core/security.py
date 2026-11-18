@@ -236,13 +236,17 @@ async def verify_management_key(
         return "dashboard-session"
 
     if x_management_key is not None:
-        if secrets.compare_digest(x_management_key.strip(), configured_key):
+        if secrets.compare_digest(
+            x_management_key.strip().encode("utf-8"), configured_key.encode("utf-8")
+        ):
             return "management-key"
         raise HTTPException(status_code=401, detail="Invalid or missing management key",
                             headers={"WWW-Authenticate": "ManagementKey"})
 
     if management_key is not None:
-        if secrets.compare_digest(management_key.strip(), configured_key):
+        if secrets.compare_digest(
+            management_key.strip().encode("utf-8"), configured_key.encode("utf-8")
+        ):
             return "management-key-query"
         raise HTTPException(status_code=401, detail="Invalid or missing management key",
                             headers={"WWW-Authenticate": "ManagementKey"})

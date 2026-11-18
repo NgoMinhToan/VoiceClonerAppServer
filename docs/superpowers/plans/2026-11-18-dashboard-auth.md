@@ -422,7 +422,7 @@ async def _record_failure(ip: str) -> int:
     return count
 ```
 
-`POST /session` takes `request: Request, response: Response`. If effective key is empty → `503`; `ip = resolve_client_ip(request)`; if `await _attempts(ip) >= LOGIN_MAX_ATTEMPTS` → `429` with `headers={"Retry-After": str(LOGIN_WINDOW_SECONDS)}`; compare `secrets.compare_digest(payload.key.strip(), configured)`; on mismatch call `_record_failure` and return `401`; on success `await redis_client.delete(f"dashboard_login:{ip}")`, `response.set_cookie(DASHBOARD_SESSION_COOKIE, token, max_age=DASHBOARD_SESSION_TTL_SECONDS, httponly=True, samesite="strict", secure=_cookie_secure(), path="/")`, set `Cache-Control: no-store`, return the body.
+`POST /session` takes `request: Request, response: Response`. If effective key is empty → `503`; `ip = resolve_client_ip(request)`; if `await _attempts(ip) >= LOGIN_MAX_ATTEMPTS` → `429` with `headers={"Retry-After": str(LOGIN_WINDOW_SECONDS)}`; compare `secrets.compare_digest(payload.key.strip().encode("utf-8"), configured.encode("utf-8"))` (bytes, so non-ASCII input returns `401` instead of raising `TypeError`); on mismatch call `_record_failure` and return `401`; on success `await redis_client.delete(f"dashboard_login:{ip}")`, `response.set_cookie(DASHBOARD_SESSION_COOKIE, token, max_age=DASHBOARD_SESSION_TTL_SECONDS, httponly=True, samesite="strict", secure=_cookie_secure(), path="/")`, set `Cache-Control: no-store`, return the body.
 
 `GET /session`: verify cookie against the effective key; `401` or `{"authenticated": True}` with `no-store`.
 

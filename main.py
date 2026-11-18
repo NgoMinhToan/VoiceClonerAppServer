@@ -23,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from VoiceClonerAppServer.api.ads import router as ads_router
 from VoiceClonerAppServer.api.auth import router as auth_router
+from VoiceClonerAppServer.api.dashboard import router as dashboard_router
 from VoiceClonerAppServer.api.management import router as management_router
 from VoiceClonerAppServer.api.speech import router as speech_router
 from VoiceClonerAppServer.api.system import get_local_ip, router as system_router
@@ -115,12 +116,17 @@ class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
 
 class ApiKeyValidationMiddleware(BaseHTTPMiddleware):
     """
-    Validates X-API-Key on /v1/* client endpoints (excluding /v1/management).
+    Validates X-API-Key on /v1/* client endpoints (excluding /v1/management and /v1/dashboard).
     When require_client_api_key is True, all client requests must provide a valid active key.
     Even with a valid User Bearer token, requests without or with an invalid client key are rejected.
     """
     async def dispatch(self, request: Request, call_next):
-        if request.method != "OPTIONS" and request.url.path.startswith("/v1/") and not request.url.path.startswith("/v1/management"):
+        if (
+            request.method != "OPTIONS"
+            and request.url.path.startswith("/v1/")
+            and not request.url.path.startswith("/v1/management")
+            and not request.url.path.startswith("/v1/dashboard")
+        ):
             settings = settings_manager.get_settings()
             x_api_key = request.headers.get("x-api-key") or request.query_params.get("api_key")
             cleaned_key = (x_api_key or "").strip()
@@ -175,6 +181,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Include Routers
 app.include_router(ads_router)
 app.include_router(auth_router)
+app.include_router(dashboard_router)
 app.include_router(management_router)
 app.include_router(speech_router)
 app.include_router(tokens_router)
