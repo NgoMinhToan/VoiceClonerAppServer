@@ -216,3 +216,31 @@ def test_whitespace_padded_key_is_treated_as_unchanged(monkeypatch):
     )
     assert res.status_code == 200
     assert settings_manager._settings.security.management_key == KEY
+
+
+def test_dashboard_redirects_to_login_without_session():
+    res = client.get("/dashboard", follow_redirects=False)
+    assert res.status_code == 303
+    assert res.headers["location"] == "/dashboard/login"
+
+
+def test_login_page_is_public_and_has_no_key():
+    res = client.get("/dashboard/login")
+    assert res.status_code == 200
+    assert 'id="loginKeyInput"' in res.text
+    assert "vc_admin_secret_key" not in res.text
+    assert res.headers["cache-control"] == "no-store"
+
+
+def test_dashboard_serves_console_with_session():
+    _login()
+    res = client.get("/dashboard")
+    assert res.status_code == 200
+    assert "VOICE CLONER" in res.text
+    assert res.headers["cache-control"] == "no-store"
+
+
+def test_invalid_session_cookie_redirects_to_login():
+    client.cookies.set(security.DASHBOARD_SESSION_COOKIE, "garbage")
+    res = client.get("/dashboard", follow_redirects=False)
+    assert res.status_code == 303

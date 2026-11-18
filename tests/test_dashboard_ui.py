@@ -1,10 +1,17 @@
 from fastapi.testclient import TestClient
+from VoiceClonerAppServer.core.settings_manager import settings_manager
 from VoiceClonerAppServer.main import app
 
 client = TestClient(app)
 
 def test_dashboard_endpoint_serves_html():
-    res = client.get("/dashboard")
+    fresh = TestClient(app)
+    login = fresh.post(
+        "/v1/dashboard/session",
+        json={"key": settings_manager.get_effective_management_key()},
+    )
+    assert login.status_code == 200
+    res = fresh.get("/dashboard")
     assert res.status_code == 200
     assert "VOICE CLONER" in res.text or "Voice Cloner" in res.text
     assert "Chart.js" in res.text or "chart.js" in res.text.lower()
