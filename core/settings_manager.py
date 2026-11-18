@@ -20,7 +20,7 @@ class ServerConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
-    management_key: str = Field("vc_admin_secret_key_123", description="Key xác thực quản trị (Admin/Management API & Dashboard)")
+    management_key: str = Field("", description="Key xác thực quản trị (Admin/Management API & Dashboard)")
     require_client_api_key: bool = Field(True, description="Bắt buộc client app/web phải có Client API Key")
     anonymous_signup_per_ip_per_day: int = Field(10, ge=0, description="Số tài khoản ẩn danh tối đa mỗi IP được tạo mỗi ngày")
     trust_forwarded_for: bool = Field(False, description="Tin cậy header X-Forwarded-For khi xác định IP client")
@@ -106,6 +106,7 @@ class AppSettings(BaseModel):
 class SettingsManager:
     def __init__(self, settings_path: Optional[Path] = None):
         self._path = Path(os.getenv("CONFIG_PATH", str(settings_path or DEFAULT_SETTINGS_PATH))).resolve()
+        self._env_management_key = (os.getenv("MANAGEMENT_KEY") or "").strip()
         self._settings: Optional[AppSettings] = None
         self._on_change_hooks: List[Callable[[AppSettings], None]] = []
         self._last_mtime: float = 0.0
@@ -189,7 +190,22 @@ class SettingsManager:
         self._check_and_reload()
         if self._settings is None:
             self._load()
+        if self._env_management_key:
+            effective = self._settings.model_copy(deep=True)
+            effective.security.management_key = self._env_management_key
+            return effective
         return self._settings
+
+    def get_effective_management_key(self) -> str:
+        self._check_and_reload()
+        return self._env_management_key or self._settings.security.management_key
+
+    @property
+    def management_key_source(self) -> str:
+        self._check_and_reload()
+        if self._env_management_key:
+            return "environment"
+        return "config" if self._settings.security.management_key else "unset"
 
     def update_settings(self, updates: Dict[str, Any]) -> AppSettings:
         self._check_and_reload()
