@@ -230,11 +230,8 @@ async def verify_management_key(
     if not configured_key:
         raise HTTPException(status_code=503, detail="Management key is not configured")
 
-    if verify_dashboard_session_token(vc_dashboard_session or "", configured_key):
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.headers.get("X-Dashboard-Request") != "1":
-            raise HTTPException(status_code=403, detail="Missing X-Dashboard-Request header")
-        return "dashboard-session"
-
+    # Explicit credentials take precedence over the ambient session cookie, so a
+    # caller can rotate the key from the dashboard while still holding a cookie.
     if x_management_key is not None:
         if secrets.compare_digest(
             x_management_key.strip().encode("utf-8"), configured_key.encode("utf-8")
@@ -250,6 +247,11 @@ async def verify_management_key(
             return "management-key-query"
         raise HTTPException(status_code=401, detail="Invalid or missing management key",
                             headers={"WWW-Authenticate": "ManagementKey"})
+
+    if verify_dashboard_session_token(vc_dashboard_session or "", configured_key):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.headers.get("X-Dashboard-Request") != "1":
+            raise HTTPException(status_code=403, detail="Missing X-Dashboard-Request header")
+        return "dashboard-session"
 
     raise HTTPException(status_code=401, detail="Invalid or missing management key",
                         headers={"WWW-Authenticate": "ManagementKey"})

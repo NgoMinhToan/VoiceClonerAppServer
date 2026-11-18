@@ -102,3 +102,66 @@ def test_session_endpoints_always_send_no_store():
     status = client.get("/v1/dashboard/session")
     assert status.status_code == 401
     assert status.headers["cache-control"] == "no-store"
+
+
+def _login():
+    assert client.post("/v1/dashboard/session", json={"key": KEY}).status_code == 200
+
+
+def test_settings_response_redacts_management_key():
+    res = client.get("/v1/management/settings", headers={"X-Management-Key": KEY})
+    data = res.json()
+    assert data["security"]["management_key"] == ""
+    assert data["management_key_configured"] is True
+    assert data["management_key_source"] == "environment"
+    assert data["client_api_keys"] is not None
+
+
+def test_cookie_cannot_rotate_management_key():
+    _login()
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Dashboard-Request": "1"},
+        json={"security": {"management_key": "new_key_from_cookie"}},
+    )
+    assert res.status_code == 403
+
+
+def test_header_rotation_invalidates_sessions(monkeypatch):
+    _login()
+    # Simulate a config-managed key without touching the real config file.
+    monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
+    monkeypatch.setattr(settings_manager, "_env_management_key", "")
+    settings_manager._settings.security.management_key = KEY
+    monkeypatch.setattr(settings_manager, "_save_to_disk", lambda: None)
+
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": "rotated_key_123"}},
+    )
+    assert res.status_code == 200
+    assert res.json()["security"]["management_key"] == ""
+    assert client.get("/v1/dashboard/session").status_code == 401
+    assert client.get("/v1/management/settings", headers={"X-Management-Key": "rotated_key_123"}).status_code == 200
+
+
+def test_env_managed_key_rotation_is_rejected():
+    _login()
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": "ignored_key_123"}},
+    )
+    assert res.status_code == 409
+
+
+def test_cookie_authenticates_management_get():
+    _login()
+    assert client.get("/v1/management/settings").status_code == 200
+
+
+def test_cookie_mutation_requires_csrf_header():
+    _login()
+    res = client.put("/v1/management/settings", json={"server": {"port": 8000}})
+    assert res.status_code == 403
