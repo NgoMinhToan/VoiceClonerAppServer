@@ -97,5 +97,20 @@ def test_dashboard_js_syntax_is_valid():
     assert res.returncode == 0, f"app.js syntax error:\n{res.stderr}"
 
 
+def test_dashboard_js_uses_cookie_session_only():
+    from pathlib import Path
+    js_path = Path("VoiceClonerAppServer/static/dashboard/app.js")
+    if not js_path.exists():
+        js_path = Path("static/dashboard/app.js")
+    js = js_path.read_text(encoding="utf-8")
+
+    assert "vc_admin_secret_key" not in js
+    assert "X-Management-Key" not in js
+    assert "credentials: 'same-origin'" in js
+    assert "X-Dashboard-Request" in js
+    assert "logoutDashboard" in js
+    assert "/dashboard/login" in js
+
+
 
 

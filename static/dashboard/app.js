@@ -35,14 +35,6 @@ const charts = {
   analysisEfficiency: null,
 };
 
-function getManagementKey() {
-  return localStorage.getItem('vc_management_key') || 'vc_admin_secret_key_123';
-}
-
-function setManagementKey(key) {
-  localStorage.setItem('vc_management_key', key.trim());
-}
-
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
@@ -59,17 +51,15 @@ function showToast(message, type = 'info') {
 }
 
 async function apiRequest(endpoint, options = {}) {
-  const key = getManagementKey();
   const headers = {
     'Content-Type': 'application/json',
-    'X-Management-Key': key,
+    'X-Dashboard-Request': '1',
     ...(options.headers || {}),
   };
   try {
-    const res = await fetch(endpoint, { ...options, headers });
+    const res = await fetch(endpoint, { ...options, headers, credentials: 'same-origin' });
     if (res.status === 401) {
-      showToast('Khóa quản trị (Management Key) không đúng hoặc thiếu!', 'error');
-      openAuthModal();
+      window.location.assign('/dashboard/login');
       throw new Error('Unauthorized');
     }
     return res;
@@ -78,6 +68,14 @@ async function apiRequest(endpoint, options = {}) {
       showToast('Không thể kết nối đến API Server!', 'error');
     }
     throw err;
+  }
+}
+
+async function logoutDashboard() {
+  try {
+    await fetch('/v1/dashboard/session', { method: 'DELETE', credentials: 'same-origin' });
+  } finally {
+    window.location.assign('/dashboard/login');
   }
 }
 
@@ -2562,9 +2560,6 @@ async function revokeKey(keyId) {
 // ── TAB 6: SETTINGS MANAGEMENT ──
 
 async function fetchSettings() {
-  const mgmtInput = document.getElementById('mgmtKeySettingsInput');
-  if (mgmtInput) mgmtInput.value = getManagementKey();
-
   try {
     const res = await apiRequest('/v1/management/settings');
     if (res.ok) {
@@ -2583,6 +2578,11 @@ async function fetchSettings() {
         const reqKey = document.getElementById('requireClientApiKeyInput');
         if (reqKey) reqKey.checked = data.security.require_client_api_key ?? true;
       }
+
+      const keyStatus = document.getElementById('mgmtKeyStatusText');
+      if (keyStatus) keyStatus.textContent = data.management_key_configured ? 'Đã cấu hình' : 'Chưa cấu hình';
+      const keySource = document.getElementById('mgmtKeySourceText');
+      if (keySource) keySource.textContent = data.management_key_source ? `(${data.management_key_source})` : '';
 
       // Default User Limits
       if (data.default_user_limits) {
@@ -2669,27 +2669,22 @@ async function saveServerSettings() {
   }
 }
 
-async function saveMgmtKeySettings() {
-  const keyVal = document.getElementById('mgmtKeySettingsInput')?.value.trim();
+async function saveSecuritySettings() {
   const requireKey = document.getElementById('requireClientApiKeyInput')?.checked ?? true;
 
-  if (!keyVal) {
-    showToast('Vui lòng nhập Management Key!', 'error');
-    return;
-  }
   try {
     const res = await apiRequest('/v1/management/settings', {
       method: 'PUT',
       body: JSON.stringify({
         security: {
-          management_key: keyVal,
           require_client_api_key: requireKey,
         },
       }),
     });
     if (res.ok) {
-      setManagementKey(keyVal);
       showToast('Đã lưu cấu hình bảo mật thành công!', 'success');
+    } else if (res.status === 409) {
+      showToast('Khóa quản trị đang được quản lý bởi biến môi trường, không thể thay đổi tại đây!', 'error');
     }
   } catch (e) {
     showToast('Lỗi lưu cấu hình bảo mật', 'error');
@@ -3181,27 +3176,6 @@ function togglePasswordVisibility(inputId) {
   } else {
     input.type = 'password';
     if (eye) eye.className = 'fa-solid fa-eye';
-  }
-}
-
-function openAuthModal() {
-  const modal = document.getElementById('authModal');
-  if (!modal) return;
-  document.getElementById('authModalKeyInput').value = getManagementKey();
-  modal.classList.remove('hidden');
-}
-
-function closeAuthModal() {
-  document.getElementById('authModal')?.classList.add('hidden');
-}
-
-function saveAuthModalKey() {
-  const val = document.getElementById('authModalKeyInput')?.value.trim();
-  if (val) {
-    setManagementKey(val);
-    showToast('Đã lưu Management Key!', 'success');
-    closeAuthModal();
-    switchKTab(currentKTab);
   }
 }
 
