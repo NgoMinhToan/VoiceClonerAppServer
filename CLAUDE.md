@@ -26,7 +26,9 @@ From the repository root, use `.\.venv\Scripts\python.exe -m pytest VoiceClonerA
 
 ## Invariants
 
-- `/v1/*` requires a valid client key; management paths require `X-Management-Key`; speech/preview/clone require a user JWT.
+- `/v1/*` requires a valid client key; management paths require `X-Management-Key` or a dashboard session cookie; speech/preview/clone require a user JWT.
+- `/dashboard` requires a session cookie minted from the management key; the key is never sent to clients.
+- An empty effective management key (`MANAGEMENT_KEY` and `security.management_key` both unset) fails closed (`503`).
 - Voice ownership (IDOR) is checked before cache or in-flight lookups.
 - Cache key: `sha256(voice_id:normalized_text:smart_pause:48000hz)`; never add speed or pitch.
 - Standard cache hits are quota-exempt; unbilled cache claims deduct quota and promote atomically.
