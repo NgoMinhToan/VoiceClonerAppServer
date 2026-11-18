@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, desc, func, select
 
 from VoiceClonerAppServer.core.settings_manager import (
+    LEGACY_INSECURE_MANAGEMENT_KEY,
     AppSettings,
     ClientApiKeyConfig,
     ModelWorkerConfig,
@@ -106,6 +107,14 @@ async def update_settings(
                 detail="management_key must be a string",
             )
         requested_key = requested_key.strip()
+        if requested_key == LEGACY_INSECURE_MANAGEMENT_KEY:
+            # The historical shipped default is public knowledge and is treated
+            # as unset on read, so rotating to it would silently lock the
+            # operator out. Reject it outright instead of returning a false 200.
+            raise HTTPException(
+                status_code=422,
+                detail="management_key must not be the historical default",
+            )
         current_key = settings_manager.get_effective_management_key()
         if not requested_key or requested_key == current_key:
             # Blank or unchanged: never persist the effective management key.
@@ -128,6 +137,9 @@ async def update_settings(
                 status_code=403,
                 detail="Rotate the management key with X-Management-Key or the environment",
             )
+        else:
+            # Persist the trimmed value, so disk holds exactly what was compared.
+            security_update["management_key"] = requested_key
     settings_manager.update_settings(updates)
     return serialize_settings(settings_manager.get_settings())
 

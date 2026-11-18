@@ -244,3 +244,74 @@ def test_invalid_session_cookie_redirects_to_login():
     client.cookies.set(security.DASHBOARD_SESSION_COOKIE, "garbage")
     res = client.get("/dashboard", follow_redirects=False)
     assert res.status_code == 303
+
+
+def test_login_page_redirects_to_dashboard_with_valid_session():
+    _login()
+    res = client.get("/dashboard/login", follow_redirects=False)
+    assert res.status_code == 303
+    assert res.headers["location"] == "/dashboard"
+
+
+def test_session_status_returns_401_when_key_unset(monkeypatch):
+    monkeypatch.setattr(settings_manager, "_env_management_key", "")
+    monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
+    settings_manager._settings.security.management_key = ""
+    res = client.get("/v1/dashboard/session")
+    assert res.status_code == 401
+
+
+def test_empty_header_falls_through_to_valid_query_key():
+    res = client.get(
+        "/v1/management/settings",
+        params={"management_key": KEY},
+        headers={"X-Management-Key": ""},
+    )
+    assert res.status_code == 200
+
+
+def test_rotation_to_legacy_default_is_rejected(monkeypatch):
+    from VoiceClonerAppServer.core.settings_manager import LEGACY_INSECURE_MANAGEMENT_KEY
+
+    monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
+    monkeypatch.setattr(settings_manager, "_env_management_key", "")
+    settings_manager._settings.security.management_key = KEY
+    monkeypatch.setattr(settings_manager, "_save_to_disk", lambda: None)
+
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": LEGACY_INSECURE_MANAGEMENT_KEY}},
+    )
+    assert res.status_code == 422
+
+
+def test_rotation_persists_stripped_key(monkeypatch):
+    monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
+    monkeypatch.setattr(settings_manager, "_env_management_key", "")
+    settings_manager._settings.security.management_key = KEY
+    monkeypatch.setattr(settings_manager, "_save_to_disk", lambda: None)
+
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": "  rotated_key_123  "}},
+    )
+    assert res.status_code == 200
+    assert settings_manager._settings.security.management_key == "rotated_key_123"
+
+
+def test_resolve_client_ip_uses_rightmost_forwarded_hop(monkeypatch):
+    from starlette.requests import Request
+
+    monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
+    settings_manager._settings.security.trust_forwarded_for = True
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [(b"x-forwarded-for", b"203.0.113.9, 198.51.100.7")],
+        "client": ("10.0.0.1", 12345),
+    }
+    assert security.resolve_client_ip(Request(scope)) == "198.51.100.7"

@@ -90,14 +90,20 @@ def has_valid_dashboard_session(request: Request) -> bool:
 
 
 def resolve_client_ip(request: Request) -> str:
-    """Return the caller IP, honoring X-Forwarded-For only when trusted."""
+    """Return the caller IP, honoring X-Forwarded-For only when trusted.
+
+    Uses the rightmost non-empty hop rather than the leftmost one: the leftmost
+    value is client-supplied and can be spoofed to evade per-IP rate limits,
+    while the rightmost value is the one appended by the nearest trusted proxy.
+    """
     security = settings_manager.get_settings().security
     if security.trust_forwarded_for:
         forwarded_for = request.headers.get("x-forwarded-for")
         if forwarded_for:
-            first_hop = forwarded_for.split(",")[0].strip()
-            if first_hop:
-                return first_hop
+            for hop in reversed(forwarded_for.split(",")):
+                candidate = hop.strip()
+                if candidate:
+                    return candidate
     return request.client.host if request.client else "unknown"
 
 
@@ -232,17 +238,21 @@ async def verify_management_key(
 
     # Explicit credentials take precedence over the ambient session cookie, so a
     # caller can rotate the key from the dashboard while still holding a cookie.
-    if x_management_key is not None:
+    # Blank values are treated as absent, letting a valid session or the other
+    # credential source still authenticate the request.
+    header_key = (x_management_key or "").strip()
+    if header_key:
         if secrets.compare_digest(
-            x_management_key.strip().encode("utf-8"), configured_key.encode("utf-8")
+            header_key.encode("utf-8"), configured_key.encode("utf-8")
         ):
             return "management-key"
         raise HTTPException(status_code=401, detail="Invalid or missing management key",
                             headers={"WWW-Authenticate": "ManagementKey"})
 
-    if management_key is not None:
+    query_key = (management_key or "").strip()
+    if query_key:
         if secrets.compare_digest(
-            management_key.strip().encode("utf-8"), configured_key.encode("utf-8")
+            query_key.encode("utf-8"), configured_key.encode("utf-8")
         ):
             return "management-key-query"
         raise HTTPException(status_code=401, detail="Invalid or missing management key",

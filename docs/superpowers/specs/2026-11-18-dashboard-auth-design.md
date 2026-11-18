@@ -137,6 +137,9 @@ All three send `Cache-Control: no-store`. The key is never echoed in responses o
    `secrets.compare_digest` as today.
 4. Else `401`.
 
+Explicit `X-Management-Key`/query credentials are checked before the session cookie, so a
+cookie-authenticated caller can still rotate the key by sending the header.
+
 Because the dependency is on the management router, all existing routes inherit the behavior.
 
 ### 7.6 Page serving

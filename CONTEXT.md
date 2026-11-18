@@ -39,7 +39,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 
 ## 3. Security and Limits
 
-- 3-tier keys plus user JWTs. All `/v1/*` client routes require an active client key; management routes require the management key; speech, preview, and clone require a user token.
+- 3-tier keys plus user JWTs. All `/v1/*` client routes require an active client key; management routes accept `X-Management-Key`, the `management_key` query, or a dashboard session cookie; speech, preview, and clone require a user token.
 - Access tokens carry an `acct` claim (`user` or `anonymous`) and resolve against `users` or `anonymous_users`; refresh preserves `acct`, and legacy tokens without the claim are treated as normal users.
 - Anonymous install accounts live in the separate `anonymous_users` table, keyed by the unique client-generated UUID `install_id` with the synthetic email `anon+<install_id>@anonymous.local`. `POST /v1/auth/anonymous` creates or resumes the account and recreates it if the row is missing (a desync after a database reset), rather than failing. New accounts use `default_anonymous_limits` with `max_cloned_slots = 0`; profile responses expose `bonus_tts_chars`.
 - Anonymous signups are rate-limited per IP per business day (`anon_signup:{ip}:{date}` in Redis, `anonymous_signup_per_ip_per_day`); only new accounts count, and `X-Forwarded-For` is honored only when `trust_forwarded_for` is enabled.
