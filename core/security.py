@@ -240,8 +240,8 @@ async def verify_management_key(
     # caller can rotate the key from the dashboard while still holding a cookie.
     # Blank values are treated as absent, letting a valid session or the other
     # credential source still authenticate the request.
-    header_key = (x_management_key or "").strip()
-    if header_key:
+    header_key = x_management_key or ""
+    if header_key.strip():
         if secrets.compare_digest(
             header_key.encode("utf-8"), configured_key.encode("utf-8")
         ):
@@ -249,8 +249,8 @@ async def verify_management_key(
         raise HTTPException(status_code=401, detail="Invalid or missing management key",
                             headers={"WWW-Authenticate": "ManagementKey"})
 
-    query_key = (management_key or "").strip()
-    if query_key:
+    query_key = management_key or ""
+    if query_key.strip():
         if secrets.compare_digest(
             query_key.encode("utf-8"), configured_key.encode("utf-8")
         ):

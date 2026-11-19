@@ -25,7 +25,7 @@ NO_STORE_HEADERS = {"Cache-Control": "no-store"}
 
 
 class DashboardLoginRequest(BaseModel):
-    key: str = Field(..., min_length=1, max_length=512)
+    key: str = Field(..., min_length=1)
 
 
 def _cookie_secure() -> bool:
@@ -69,7 +69,7 @@ async def login(
 
     # Compare UTF-8 bytes so non-ASCII input yields 401 instead of TypeError.
     if not secrets.compare_digest(
-        payload.key.strip().encode("utf-8"), configured.encode("utf-8")
+        payload.key.encode("utf-8"), configured.encode("utf-8")
     ):
         await _record_failure(ip)
         raise HTTPException(

@@ -202,20 +202,25 @@ def test_null_management_key_returns_422():
     assert res.status_code == 422
 
 
-def test_whitespace_padded_key_is_treated_as_unchanged(monkeypatch):
+def test_whitespace_padded_key_is_used_verbatim(monkeypatch):
     _login()
     monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
     monkeypatch.setattr(settings_manager, "_env_management_key", "")
     settings_manager._settings.security.management_key = KEY
     monkeypatch.setattr(settings_manager, "_save_to_disk", lambda: None)
 
+    padded = f" {KEY} "
     res = client.put(
         "/v1/management/settings",
         headers={"X-Management-Key": KEY},
-        json={"security": {"management_key": f" {KEY} "}},
+        json={"security": {"management_key": padded}},
     )
     assert res.status_code == 200
-    assert settings_manager._settings.security.management_key == KEY
+    assert settings_manager._settings.security.management_key == padded
+    assert settings_manager.get_effective_management_key() == padded
+    # The old, unpadded key is no longer valid once the new value is stored.
+    assert client.get("/v1/management/settings", headers={"X-Management-Key": KEY}).status_code == 401
+    assert client.get("/v1/management/settings", headers={"X-Management-Key": padded}).status_code == 200
 
 
 def test_dashboard_redirects_to_login_without_session():
@@ -270,23 +275,16 @@ def test_empty_header_falls_through_to_valid_query_key():
     assert res.status_code == 200
 
 
-def test_rotation_to_legacy_default_is_rejected(monkeypatch):
-    from VoiceClonerAppServer.core.settings_manager import LEGACY_INSECURE_MANAGEMENT_KEY
-
+def test_configured_key_can_log_in_even_if_it_matches_an_old_default(monkeypatch):
     monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
     monkeypatch.setattr(settings_manager, "_env_management_key", "")
-    settings_manager._settings.security.management_key = KEY
-    monkeypatch.setattr(settings_manager, "_save_to_disk", lambda: None)
+    settings_manager._settings.security.management_key = "vc_admin_secret_key_123"
 
-    res = client.put(
-        "/v1/management/settings",
-        headers={"X-Management-Key": KEY},
-        json={"security": {"management_key": LEGACY_INSECURE_MANAGEMENT_KEY}},
-    )
-    assert res.status_code == 422
+    res = client.post("/v1/dashboard/session", json={"key": "vc_admin_secret_key_123"})
+    assert res.status_code == 200
 
 
-def test_rotation_persists_stripped_key(monkeypatch):
+def test_rotation_persists_key_verbatim(monkeypatch):
     monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
     monkeypatch.setattr(settings_manager, "_env_management_key", "")
     settings_manager._settings.security.management_key = KEY
@@ -298,7 +296,23 @@ def test_rotation_persists_stripped_key(monkeypatch):
         json={"security": {"management_key": "  rotated_key_123  "}},
     )
     assert res.status_code == 200
-    assert settings_manager._settings.security.management_key == "rotated_key_123"
+    assert settings_manager._settings.security.management_key == "  rotated_key_123  "
+
+
+def test_blank_rotation_disables_management_access(monkeypatch):
+    monkeypatch.setattr(settings_manager, "_settings", settings_manager._settings.model_copy(deep=True))
+    monkeypatch.setattr(settings_manager, "_env_management_key", "")
+    settings_manager._settings.security.management_key = KEY
+    monkeypatch.setattr(settings_manager, "_save_to_disk", lambda: None)
+
+    res = client.put(
+        "/v1/management/settings",
+        headers={"X-Management-Key": KEY},
+        json={"security": {"management_key": ""}},
+    )
+    assert res.status_code == 200
+    assert settings_manager.get_effective_management_key() == ""
+    assert client.get("/v1/management/settings").status_code == 503
 
 
 def test_resolve_client_ip_uses_rightmost_forwarded_hop(monkeypatch):

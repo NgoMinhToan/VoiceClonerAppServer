@@ -196,13 +196,12 @@ New `static/dashboard/login.html` plus inline (or `login.js`) lightweight logic:
 - While `MANAGEMENT_KEY` is set, `PUT /v1/management/settings` rejects any attempt to change
   `security.management_key` with `409` ("management key is managed by the environment"), for
   both cookie and header authentication.
-- Startup logs one warning when the key is empty or still the historical default:
+- Startup logs one warning when the effective key is empty:
   `WARNING: management key is not configured; the dashboard is locked. Set MANAGEMENT_KEY or
   security.management_key.` It must not print the key.
-- The historical default `vc_admin_secret_key_123` is normalized to unset in
-  `get_effective_management_key()`, `management_key_source` (source becomes `"unset"`), and
-  `get_settings()`, so a stale config file cannot unlock the dashboard and the startup warning
-  fires.
+- The server applies no value filtering or history awareness: whatever non-blank key the
+  operator configures is used verbatim. Only an empty or whitespace-only value is treated as
+  unset, so a blank configuration cannot unlock the dashboard and the startup warning fires.
 - `docker-compose.yml` (root and gateway-only): pass `MANAGEMENT_KEY: ${MANAGEMENT_KEY:-}` to
   the api service. README quickstart adds a generation command:
   `python -c "import secrets; print(secrets.token_urlsafe(32))"`.

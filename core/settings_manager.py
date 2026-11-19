@@ -13,14 +13,13 @@ logger = logging.getLogger("VoiceClonerAppServer.SettingsManager")
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 DEFAULT_SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
-# Historical shipped default. It is public knowledge and must never unlock the
-# dashboard or management API, even if an old config file still contains it.
-LEGACY_INSECURE_MANAGEMENT_KEY = "vc_admin_secret_key_123"
+def _is_blank(value: Optional[str]) -> bool:
+    """A key is unset only when it is missing or contains nothing but whitespace.
 
-
-def _normalize_management_key(value: Optional[str]) -> str:
-    key = (value or "").strip()
-    return "" if key == LEGACY_INSECURE_MANAGEMENT_KEY else key
+    Any other value is used exactly as the operator configured it; the server
+    keeps no notion of "old" or "new" keys.
+    """
+    return not (value or "").strip()
 
 
 class ServerConfig(BaseModel):
@@ -115,7 +114,7 @@ class AppSettings(BaseModel):
 class SettingsManager:
     def __init__(self, settings_path: Optional[Path] = None):
         self._path = Path(os.getenv("CONFIG_PATH", str(settings_path or DEFAULT_SETTINGS_PATH))).resolve()
-        self._env_management_key = _normalize_management_key(os.getenv("MANAGEMENT_KEY"))
+        self._env_management_key = os.getenv("MANAGEMENT_KEY") or ""
         self._settings: Optional[AppSettings] = None
         self._on_change_hooks: List[Callable[[AppSettings], None]] = []
         self._last_mtime: float = 0.0
@@ -199,33 +198,25 @@ class SettingsManager:
         self._check_and_reload()
         if self._settings is None:
             self._load()
-        if self._env_management_key:
+        if not _is_blank(self._env_management_key):
             effective = self._settings.model_copy(deep=True)
             effective.security.management_key = self._env_management_key
-            return effective
-        normalized_file_key = _normalize_management_key(self._settings.security.management_key)
-        if normalized_file_key != self._settings.security.management_key:
-            effective = self._settings.model_copy(deep=True)
-            effective.security.management_key = normalized_file_key
             return effective
         return self._settings
 
     def get_effective_management_key(self) -> str:
         self._check_and_reload()
-        return self._env_management_key or _normalize_management_key(
-            self._settings.security.management_key
-        )
+        if not _is_blank(self._env_management_key):
+            return self._env_management_key
+        value = self._settings.security.management_key
+        return "" if _is_blank(value) else value
 
     @property
     def management_key_source(self) -> str:
         self._check_and_reload()
-        if self._env_management_key:
+        if not _is_blank(self._env_management_key):
             return "environment"
-        return (
-            "config"
-            if _normalize_management_key(self._settings.security.management_key)
-            else "unset"
-        )
+        return "unset" if _is_blank(self._settings.security.management_key) else "config"
 
     def update_settings(self, updates: Dict[str, Any]) -> AppSettings:
         self._check_and_reload()

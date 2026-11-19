@@ -48,20 +48,29 @@ def test_whitespace_only_config_key_counts_as_unset(tmp_path, monkeypatch):
     assert sm.management_key_source == "unset"
 
 
-def test_legacy_default_key_in_config_is_treated_as_unset(tmp_path, monkeypatch):
+def test_configured_key_is_used_verbatim_even_if_it_matches_an_old_default(tmp_path, monkeypatch):
     monkeypatch.delenv("MANAGEMENT_KEY", raising=False)
     cfg = _write_config(tmp_path, "vc_admin_secret_key_123")
     sm = SettingsManager(settings_path=cfg)
 
-    assert sm.get_effective_management_key() == ""
-    assert sm.management_key_source == "unset"
-    assert sm.get_settings().security.management_key == ""
+    assert sm.get_effective_management_key() == "vc_admin_secret_key_123"
+    assert sm.management_key_source == "config"
+    assert sm.get_settings().security.management_key == "vc_admin_secret_key_123"
 
 
-def test_legacy_default_key_in_environment_is_treated_as_unset(tmp_path, monkeypatch):
+def test_env_key_is_used_verbatim_even_if_it_matches_an_old_default(tmp_path, monkeypatch):
     monkeypatch.setenv("MANAGEMENT_KEY", "vc_admin_secret_key_123")
     cfg = _write_config(tmp_path, "")
     sm = SettingsManager(settings_path=cfg)
 
-    assert sm.get_effective_management_key() == ""
-    assert sm.management_key_source == "unset"
+    assert sm.get_effective_management_key() == "vc_admin_secret_key_123"
+    assert sm.management_key_source == "environment"
+
+
+def test_key_surrounding_spaces_are_preserved(tmp_path, monkeypatch):
+    monkeypatch.delenv("MANAGEMENT_KEY", raising=False)
+    cfg = _write_config(tmp_path, "  spaced_key  ")
+    sm = SettingsManager(settings_path=cfg)
+
+    assert sm.get_effective_management_key() == "  spaced_key  "
+    assert sm.management_key_source == "config"
