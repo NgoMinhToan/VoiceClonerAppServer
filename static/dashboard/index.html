@@ -50,9 +50,9 @@
         <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
       </a>
       <span class="text-slate-700">•</span>
-      <button onclick="openAuthModal()" class="hover:text-white flex items-center space-x-1.5 bg-[#17181d] border border-slate-800 hover:border-slate-700 px-2.5 py-1 rounded-lg transition" title="Xác thực X-Management-Key">
+      <button onclick="logoutDashboard()" class="hover:text-white flex items-center space-x-1.5 bg-[#17181d] border border-slate-800 hover:border-slate-700 px-2.5 py-1 rounded-lg transition" title="Đăng xuất khỏi phiên quản trị">
         <i class="fa-solid fa-shield-halved text-indigo-400"></i>
-        <span>Management Key</span>
+        <span>Đăng xuất</span>
       </button>
       <span class="text-slate-700">•</span>
       <a href="/docs" target="_blank" class="hover:text-white" title="Swagger Docs">
@@ -892,12 +892,11 @@
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
           <div>
             <label class="text-slate-400 block mb-1 font-medium">Khóa Quản Trị (X-Management-Key):</label>
-            <div class="flex items-center space-x-2">
-              <input id="mgmtKeySettingsInput" type="password" value="" placeholder="Nhập Management Key mới..." class="flex-1 bg-[#0d0f16] border border-slate-800 px-3.5 py-2 rounded-lg font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
-              <button onclick="togglePasswordVisibility('mgmtKeySettingsInput')" class="px-3 py-2 bg-slate-800 text-slate-400 hover:text-white rounded-lg">
-                <i class="fa-solid fa-eye" id="mgmtKeySettingsInputEye"></i>
-              </button>
+            <div class="flex items-center space-x-2 text-xs">
+              <span id="mgmtKeyStatusText" class="font-mono text-slate-200">Chưa cấu hình</span>
+              <span id="mgmtKeySourceText" class="text-slate-500"></span>
             </div>
+            <span class="text-[11px] text-slate-500 mt-1 block">Đổi khóa qua biến môi trường MANAGEMENT_KEY hoặc config/settings.json.</span>
           </div>
           <div>
             <label class="text-slate-400 block mb-1 font-medium">Chính Sách Khóa Client:</label>
@@ -912,7 +911,7 @@
           </div>
         </div>
         <div class="flex justify-end pt-1">
-          <button onclick="saveMgmtKeySettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition">
+          <button onclick="saveSecuritySettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition">
             <i class="fa-solid fa-floppy-disk"></i>
             <span>Lưu Bảo Mật</span>
           </button>
@@ -1263,29 +1262,7 @@
 
   <!-- MODALS -->
 
-  <!-- 1. Auth Management Key Modal -->
-  <div id="authModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
-    <div class="bg-[#141622] border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
-      <div class="flex items-center space-x-3">
-        <div class="w-9 h-9 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
-          <i class="fa-solid fa-shield-halved"></i>
-        </div>
-        <div>
-          <h3 class="font-bold text-sm text-white">Xác Thực Quản Trị (X-Management-Key)</h3>
-          <p class="text-xs text-slate-400">Nhập Management Key để quản trị hệ thống</p>
-        </div>
-      </div>
-      <div>
-        <input id="authModalKeyInput" type="password" placeholder="Nhập Management Key..." class="w-full px-3 py-2 rounded-lg bg-[#0d0f16] border border-slate-700 text-xs text-white mono focus:outline-none focus:border-indigo-500">
-      </div>
-      <div class="flex justify-end space-x-2 pt-2">
-        <button onclick="closeAuthModal()" class="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white transition">Hủy</button>
-        <button onclick="saveAuthModalKey()" class="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition">Xác Nhận</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 2. Create Client Key Modal -->
+  <!-- 1. Create Client Key Modal -->
   <div id="createKeyModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="bg-[#141622] border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
       <div class="flex items-center space-x-3">

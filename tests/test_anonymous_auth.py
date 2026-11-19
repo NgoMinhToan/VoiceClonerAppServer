@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from VoiceClonerAppServer.api import auth as auth_api
+from VoiceClonerAppServer.core import security as security_api
 from VoiceClonerAppServer.core.database import AsyncSessionLocal, init_db
 from VoiceClonerAppServer.core.redis_client import redis_client
 from VoiceClonerAppServer.core.settings_manager import settings_manager
@@ -48,8 +49,10 @@ def _settings_with_security(**overrides):
 def _patch_service_security(monkeypatch, **overrides):
     stub = _StubSettingsManager(_settings_with_security(**overrides))
     monkeypatch.setattr(anonymous_service, "settings_manager", stub)
-    # The endpoint resolves the client IP with its own settings reference.
+    # The endpoint resolves the client IP with the shared security helper's
+    # settings reference; user response building still uses the API module's.
     monkeypatch.setattr(auth_api, "settings_manager", stub)
+    monkeypatch.setattr(security_api, "settings_manager", stub)
 
 
 def _reset_signup_bucket(client_ip: str = "testclient") -> None:

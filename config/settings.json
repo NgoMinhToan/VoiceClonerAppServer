@@ -4,7 +4,7 @@
     "port": 8000
   },
   "security": {
-    "management_key": "vc_admin_secret_key_123",
+    "management_key": "",
     "require_client_api_key": true,
     "anonymous_signup_per_ip_per_day": 10,
     "trust_forwarded_for": false

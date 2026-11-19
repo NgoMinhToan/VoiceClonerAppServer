@@ -4,7 +4,7 @@ API gateway, reverse proxy, quota controller, and management console for the Voi
 
 - Port: `8000`
 - Stack: FastAPI, SQLAlchemy async (PostgreSQL with SQLite fallback), Redis with in-memory fallback
-- Dashboard: `http://localhost:8000/dashboard`
+- Dashboard: `http://localhost:8000/dashboard` (requires a management-key login)
 - Swagger: `http://localhost:8000/docs`
 
 ## Architecture
@@ -39,12 +39,28 @@ VoiceClonerAppServer ── dynamic voice discovery ──► workers
 
 | Tier | Header | Used by |
 | :--- | :--- | :--- |
-| Management key | `X-Management-Key` | `/v1/management/*` and all dashboard data calls |
+| Management key | `X-Management-Key` | `/v1/management/*` |
+| Dashboard session | `vc_dashboard_session` cookie | `/dashboard` and `/v1/management/*` calls made by the console |
 | Client API key | `X-API-Key: vc_live_...` | All `/v1/*` client routes |
 | User token | `Authorization: Bearer <JWT>` | Speech, preview, clone, profile |
 | Worker key | `X-API-Key: vtts_worker_...` | Gateway → worker calls |
 
 When `security.require_client_api_key` is true, every `/v1/*` request except management requires a valid active client key, even if a user token is present.
+
+### Dashboard authentication
+
+The console is not public: `/dashboard` redirects to `/dashboard/login` unless the request carries a valid session cookie. The login form exchanges the management key at `POST /v1/dashboard/session` for an `HttpOnly`, `SameSite=Strict` session cookie (`vc_dashboard_session`, 8-hour lifetime, `Path=/`). The key is never returned to the browser and is not written to `localStorage`; the console cannot read or rotate it.
+
+- Set the key through the `MANAGEMENT_KEY` environment variable (recommended, takes precedence over config and is never persisted to `config/settings.json`), or leave `security.management_key` in `config/settings.json` as a file-based fallback. Generate a key with:
+  ```bash
+  python -c "import secrets; print(secrets.token_urlsafe(32))"
+  ```
+- Set `DASHBOARD_COOKIE_SECURE=true` when the gateway is served over HTTPS so the cookie carries the `Secure` flag.
+- If the effective key is empty the dashboard fails closed: unkeyed login (`POST /v1/dashboard/session`) returns `503`, `GET /v1/dashboard/session` reports `401` (unauthenticated), and `/dashboard` keeps redirecting to the login page. The historical default `vc_admin_secret_key_123` is treated as unset.
+- Login attempts are rate limited per client IP: 10 failed attempts per 5 minutes, then `429`.
+- The console cannot change the key. When the key comes from `config/settings.json`, an operator can rotate it with `PUT /v1/management/settings` authenticated by `X-Management-Key`. When it comes from `MANAGEMENT_KEY`, update the environment variable and restart the gateway (existing sessions become invalid because the cookie is signed with the key).
+
+Migration note: a config file that still holds the historical default `vc_admin_secret_key_123` is now locked out — that value is normalized to unset and cannot unlock the dashboard or management API. Set `MANAGEMENT_KEY` or replace `security.management_key` with a newly generated key. Browsers may still hold the obsolete `vc_management_key` `localStorage` entry; clearing it is safe — the key is never handled by the console anymore.
 
 ## Configuration
 
@@ -53,7 +69,7 @@ Dynamic configuration lives in `config/settings.json` and is hot-reloaded:
 | Section | Fields |
 | :--- | :--- |
 | `server` | `host`, `port` |
-| `security` | `management_key`, `require_client_api_key` |
+| `security` | `management_key` (file fallback for `MANAGEMENT_KEY`), `require_client_api_key` |
 | `client_api_keys[]` | `id`, `name`, `key`, `is_active`, `daily_char_limit` |
 | `model_workers[]` | `id`, `url`, `api_key`, `max_concurrent` (1–64), `is_active` |
 | `default_user_limits` | `max_cloned_slots`, `daily_tts_char_limit`, `rate_limit_requests_per_minute`, `max_speech_char_limit`, `max_preview_char_limit`, `max_concurrent_tts`, `max_queue_waiters` |
@@ -69,6 +85,8 @@ Environment variables cover infrastructure and deployment only:
 | `DATABASE_URL` | `postgresql+asyncpg://voice_user:voice_pass@db:5432/voicecloner` | Primary database |
 | `REDIS_URL` | `redis://redis:6379/0` | Quota, rate limit, token blacklist |
 | `CONFIG_PATH` | `/app/VoiceClonerAppServer/config/settings.json` | Settings file |
+| `MANAGEMENT_KEY` | empty | Dashboard/management key; overrides `security.management_key` and is never written to disk |
+| `DASHBOARD_COOKIE_SECURE` | `false` | Set to `true` behind HTTPS so the session cookie is `Secure` |
 | `JWT_SECRET_KEY` | dev value | Token signing key — replace in production |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token lifetime |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token lifetime |
@@ -127,9 +145,12 @@ Environment variables cover infrastructure and deployment only:
 | :--- | :--- | :--- |
 | `GET` | `/health` | Container liveness |
 | `GET` | `/v1/system/status` | Hardware, backend, worker capacity summary |
-| `GET` | `/dashboard` | Dark management console shell (7 tabs); its data calls require the management key |
+| `GET` | `/dashboard` | Dark management console shell (7 tabs); redirects to `/dashboard/login` without a session |
+| `GET` | `/dashboard/login` | Login page for the console |
+| `POST` | `/v1/dashboard/session` | Exchange the management key for an HttpOnly session cookie |
+| `GET`, `DELETE` | `/v1/dashboard/session` | Report or clear the current dashboard session |
 
-### Management — `/v1/management` (management key)
+### Management — `/v1/management` (management key or dashboard session)
 
 | Method | Path | Purpose |
 | :--- | :--- | :--- |

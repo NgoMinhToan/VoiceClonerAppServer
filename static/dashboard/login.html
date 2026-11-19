@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VOICE CLONER - Đăng nhập Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body class="min-h-screen flex items-center justify-center antialiased bg-[#0a0b0f] text-slate-100 px-4">
+
+  <div class="w-full max-w-md">
+    <div class="flex items-center justify-center space-x-3 mb-6">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-purple-500/20">
+        <i class="fa-solid fa-wave-square text-white"></i>
+      </div>
+      <div class="flex items-baseline space-x-2">
+        <span class="font-extrabold tracking-wider text-lg text-white">VOICE CLONER</span>
+        <span class="text-[11px] font-semibold text-slate-400 tracking-wider">AI VOICE GATEWAY CONSOLE</span>
+      </div>
+    </div>
+
+    <div class="bg-[#111215] border border-slate-800 rounded-2xl p-8 shadow-2xl shadow-black/40">
+      <div class="mb-6">
+        <h1 class="text-xl font-bold text-white flex items-center space-x-2">
+          <i class="fa-solid fa-lock text-indigo-400 text-base"></i>
+          <span>Đăng nhập quản trị</span>
+        </h1>
+        <p class="text-xs text-slate-400 mt-2">Nhập Management Key để mở bảng điều khiển.</p>
+      </div>
+
+      <form id="loginForm" class="space-y-4" autocomplete="off">
+        <div>
+          <label for="loginKeyInput" class="block text-[11px] font-semibold tracking-wider text-slate-400 mb-1.5">
+            MANAGEMENT KEY
+          </label>
+          <input
+            id="loginKeyInput"
+            name="key"
+            type="password"
+            required
+            autocomplete="current-password"
+            class="w-full bg-[#17181d] border border-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-lg px-3 py-2.5 text-sm text-slate-100 font-mono transition"
+            placeholder="••••••••••••">
+        </div>
+
+        <p id="loginError" class="hidden text-xs text-rose-400"></p>
+
+        <button
+          id="loginSubmit"
+          type="submit"
+          class="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:opacity-90 transition rounded-lg px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-purple-500/20">
+          Đăng nhập
+        </button>
+      </form>
+    </div>
+
+    <p class="text-center text-[11px] text-slate-600 mt-6">Phiên đăng nhập hết hạn sau 8 giờ.</p>
+  </div>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const input = document.getElementById('loginKeyInput');
+    const error = document.getElementById('loginError');
+    const submit = document.getElementById('loginSubmit');
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      error.classList.add('hidden');
+      submit.disabled = true;
+      try {
+        const res = await fetch('/v1/dashboard/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ key: document.getElementById('loginKeyInput').value }),
+        });
+        if (res.ok) window.location.assign('/dashboard');
+        else if (res.status === 429) error.textContent = 'Quá nhiều lần thử. Vui lòng đợi 5 phút.';
+        else if (res.status === 503) error.textContent = 'Máy chủ chưa cấu hình khóa quản trị.';
+        else error.textContent = 'Khóa quản trị không đúng.';
+        error.classList.remove('hidden');
+      } catch (e) {
+        error.textContent = 'Không kết nối được máy chủ.';
+        error.classList.remove('hidden');
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  </script>
+
+</body>
+</html>

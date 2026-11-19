@@ -1,5 +1,11 @@
+import os
 import sys
 from pathlib import Path
+
+# Pin the management key for the whole suite before any test imports `main`.
+# Assign (not setdefault) so a MANAGEMENT_KEY exported on the host machine
+# cannot leak into the tests.
+os.environ["MANAGEMENT_KEY"] = "test_management_key"
 
 # Ensure the parent directory of VoiceClonerAppServer is on sys.path
 # so that imports like `from VoiceClonerAppServer...` resolve whether

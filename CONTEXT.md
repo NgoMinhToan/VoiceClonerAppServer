@@ -39,7 +39,7 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 
 ## 3. Security and Limits
 
-- 3-tier keys plus user JWTs. All `/v1/*` client routes require an active client key; management routes require the management key; speech, preview, and clone require a user token.
+- 3-tier keys plus user JWTs. All `/v1/*` client routes require an active client key; management routes accept `X-Management-Key`, the `management_key` query, or a dashboard session cookie; speech, preview, and clone require a user token.
 - Access tokens carry an `acct` claim (`user` or `anonymous`) and resolve against `users` or `anonymous_users`; refresh preserves `acct`, and legacy tokens without the claim are treated as normal users.
 - Anonymous install accounts live in the separate `anonymous_users` table, keyed by the unique client-generated UUID `install_id` with the synthetic email `anon+<install_id>@anonymous.local`. `POST /v1/auth/anonymous` creates or resumes the account and recreates it if the row is missing (a desync after a database reset), rather than failing. New accounts use `default_anonymous_limits` with `max_cloned_slots = 0`; profile responses expose `bonus_tts_chars`.
 - Anonymous signups are rate-limited per IP per business day (`anon_signup:{ip}:{date}` in Redis, `anonymous_signup_per_ip_per_day`); only new accounts count, and `X-Forwarded-For` is honored only when `trust_forwarded_for` is enabled.
@@ -76,6 +76,8 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 ## 6. Dashboard
 
 - `/dashboard` is a 7-tab dark console: Overview, Analysis, Realtime, Request Events, Voice Workers, API Keys, Settings.
+- `/dashboard` requires a session cookie minted from the management key; unauthenticated requests redirect (`303`) to `/dashboard/login`. The console never sees or stores the key: `POST /v1/dashboard/session` verifies it server-side and sets an `HttpOnly`, `SameSite=Strict` cookie (8 h, `Secure` via `DASHBOARD_COOKIE_SECURE`).
+- The management key comes from `MANAGEMENT_KEY` (never persisted) or `config/settings.json`; the historical default `vc_admin_secret_key_123` is normalized to unset so it cannot unlock anything and the startup warning fires. Settings API responses redact the key and the console cannot rotate it (rotating a config-file key uses `PUT /v1/management/settings` with `X-Management-Key`). An empty effective key fails closed: unkeyed login returns `503`, while `GET /v1/dashboard/session` returns `401`; the dashboard stays locked.
 - Metrics are backed by `api_usage_logs` and `/v1/management/metrics/{summary,analysis}`.
 - Calendar day bounds honor a client timezone offset; the activity heatmap maps requests to discrete time blocks.
 - Settings edits ad rewards (enabled, chars per ad, daily ad cap where `0` disables all rewards, rewarded/allowed ad unit IDs, SSV verifier URL) and default anonymous limits; anonymous clone slots are fixed and shown disabled at 0.
@@ -94,4 +96,4 @@ Central API gateway and reverse proxy for the Voice Cloner platform. It terminat
 pytest tests/ -v
 ```
 
-Current suite: 173 tests across 28 modules. Run before every commit; the pre-push hook does the same.
+Current suite: 207 tests across 28 modules. Run before every commit; the pre-push hook does the same.

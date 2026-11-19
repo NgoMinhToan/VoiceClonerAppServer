@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 import os
 import re
@@ -6,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import bcrypt
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Cookie, Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -45,6 +47,64 @@ REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
 logger = logging.getLogger(__name__)
+
+DASHBOARD_SESSION_COOKIE = "vc_dashboard_session"
+DASHBOARD_SESSION_TTL_SECONDS = 8 * 60 * 60
+
+
+def _dashboard_signing_key(management_key: str) -> bytes:
+    return hmac.new(
+        JWT_SECRET_KEY.encode("utf-8"), management_key.encode("utf-8"), hashlib.sha256
+    ).digest()
+
+
+def create_dashboard_session_token(management_key: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": "dashboard",
+        "type": "dashboard",
+        "kv": hashlib.sha256(management_key.encode("utf-8")).hexdigest()[:16],
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=DASHBOARD_SESSION_TTL_SECONDS)).timestamp()),
+    }
+    return jwt.encode(payload, _dashboard_signing_key(management_key), algorithm=JWT_ALGORITHM)
+
+
+def verify_dashboard_session_token(token: str, management_key: str) -> bool:
+    if not token or not management_key:
+        return False
+    try:
+        payload = jwt.decode(
+            token, _dashboard_signing_key(management_key), algorithms=[JWT_ALGORITHM]
+        )
+    except JWTError:
+        return False
+    expected = hashlib.sha256(management_key.encode("utf-8")).hexdigest()[:16]
+    return payload.get("type") == "dashboard" and payload.get("kv") == expected
+
+
+def has_valid_dashboard_session(request: Request) -> bool:
+    key = settings_manager.get_effective_management_key()
+    token = request.cookies.get(DASHBOARD_SESSION_COOKIE, "")
+    return verify_dashboard_session_token(token, key)
+
+
+def resolve_client_ip(request: Request) -> str:
+    """Return the caller IP, honoring X-Forwarded-For only when trusted.
+
+    Uses the rightmost non-empty hop rather than the leftmost one: the leftmost
+    value is client-supplied and can be spoofed to evade per-IP rate limits,
+    while the rightmost value is the one appended by the nearest trusted proxy.
+    """
+    security = settings_manager.get_settings().security
+    if security.trust_forwarded_for:
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            for hop in reversed(forwarded_for.split(",")):
+                candidate = hop.strip()
+                if candidate:
+                    return candidate
+    return request.client.host if request.client else "unknown"
 
 
 def hash_password(password: str) -> str:
@@ -166,22 +226,45 @@ async def get_optional_user(
 
 
 async def verify_management_key(
+    request: Request,
     x_management_key: Optional[str] = Header(None, alias="X-Management-Key"),
     management_key: Optional[str] = Query(None),
+    vc_dashboard_session: Optional[str] = Cookie(None, alias=DASHBOARD_SESSION_COOKIE),
 ) -> str:
     """Verify Management API Key for Admin Console and /v1/management/* endpoints."""
-    configured_key = settings_manager.get_settings().security.management_key
+    configured_key = settings_manager.get_effective_management_key()
     if not configured_key:
-        return ""
+        raise HTTPException(status_code=503, detail="Management key is not configured")
 
-    provided_key = (x_management_key or management_key or "").strip()
-    if not provided_key or not secrets.compare_digest(provided_key, configured_key):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing management key",
-            headers={"WWW-Authenticate": "ManagementKey"},
-        )
-    return provided_key
+    # Explicit credentials take precedence over the ambient session cookie, so a
+    # caller can rotate the key from the dashboard while still holding a cookie.
+    # Blank values are treated as absent, letting a valid session or the other
+    # credential source still authenticate the request.
+    header_key = (x_management_key or "").strip()
+    if header_key:
+        if secrets.compare_digest(
+            header_key.encode("utf-8"), configured_key.encode("utf-8")
+        ):
+            return "management-key"
+        raise HTTPException(status_code=401, detail="Invalid or missing management key",
+                            headers={"WWW-Authenticate": "ManagementKey"})
+
+    query_key = (management_key or "").strip()
+    if query_key:
+        if secrets.compare_digest(
+            query_key.encode("utf-8"), configured_key.encode("utf-8")
+        ):
+            return "management-key-query"
+        raise HTTPException(status_code=401, detail="Invalid or missing management key",
+                            headers={"WWW-Authenticate": "ManagementKey"})
+
+    if verify_dashboard_session_token(vc_dashboard_session or "", configured_key):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.headers.get("X-Dashboard-Request") != "1":
+            raise HTTPException(status_code=403, detail="Missing X-Dashboard-Request header")
+        return "dashboard-session"
+
+    raise HTTPException(status_code=401, detail="Invalid or missing management key",
+                        headers={"WWW-Authenticate": "ManagementKey"})
 
 
 async def verify_client_api_key(

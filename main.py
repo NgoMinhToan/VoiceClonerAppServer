@@ -23,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from VoiceClonerAppServer.api.ads import router as ads_router
 from VoiceClonerAppServer.api.auth import router as auth_router
+from VoiceClonerAppServer.api.dashboard import router as dashboard_router
 from VoiceClonerAppServer.api.management import router as management_router
 from VoiceClonerAppServer.api.speech import router as speech_router
 from VoiceClonerAppServer.api.system import get_local_ip, router as system_router
@@ -30,6 +31,7 @@ from VoiceClonerAppServer.api.tokens import router as tokens_router
 from VoiceClonerAppServer.api.voices import router as voices_router
 from VoiceClonerAppServer.core.database import init_db
 from VoiceClonerAppServer.core.redis_client import redis_client
+from VoiceClonerAppServer.core.security import has_valid_dashboard_session
 from VoiceClonerAppServer.core.settings_manager import settings_manager
 from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 from VoiceClonerAppServer.services.voice_service import voice_service
@@ -41,6 +43,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = settings_manager.get_settings()
+    if not settings.security.management_key:
+        logger.warning(
+            "Management key is not configured; the dashboard is locked. "
+            "Set MANAGEMENT_KEY or security.management_key."
+        )
     lan_ip = get_local_ip()
 
     print("\n" + "=" * 68)
@@ -115,12 +122,17 @@ class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
 
 class ApiKeyValidationMiddleware(BaseHTTPMiddleware):
     """
-    Validates X-API-Key on /v1/* client endpoints (excluding /v1/management).
+    Validates X-API-Key on /v1/* client endpoints (excluding /v1/management and /v1/dashboard).
     When require_client_api_key is True, all client requests must provide a valid active key.
     Even with a valid User Bearer token, requests without or with an invalid client key are rejected.
     """
     async def dispatch(self, request: Request, call_next):
-        if request.method != "OPTIONS" and request.url.path.startswith("/v1/") and not request.url.path.startswith("/v1/management"):
+        if (
+            request.method != "OPTIONS"
+            and request.url.path.startswith("/v1/")
+            and not request.url.path.startswith("/v1/management")
+            and not request.url.path.startswith("/v1/dashboard")
+        ):
             settings = settings_manager.get_settings()
             x_api_key = request.headers.get("x-api-key") or request.query_params.get("api_key")
             cleaned_key = (x_api_key or "").strip()
@@ -175,6 +187,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Include Routers
 app.include_router(ads_router)
 app.include_router(auth_router)
+app.include_router(dashboard_router)
 app.include_router(management_router)
 app.include_router(speech_router)
 app.include_router(tokens_router)
@@ -182,12 +195,36 @@ app.include_router(voices_router)
 app.include_router(system_router)
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def serve_dashboard():
+@app.get("/dashboard")
+async def serve_dashboard(request: Request):
+    if not has_valid_dashboard_session(request):
+        return RedirectResponse(url="/dashboard/login", status_code=303)
     dashboard_index = DASHBOARD_DIR / "index.html"
     if dashboard_index.exists():
-        return HTMLResponse(content=dashboard_index.read_text(encoding="utf-8"))
-    return HTMLResponse(content="<h1>Voice Cloner Management Console</h1><p>Dashboard UI initializing...</p>")
+        return HTMLResponse(
+            content=dashboard_index.read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-store"},
+        )
+    return HTMLResponse(
+        content="<h1>Voice Cloner Management Console</h1><p>Dashboard UI initializing...</p>",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/dashboard/login")
+async def serve_dashboard_login(request: Request):
+    if has_valid_dashboard_session(request):
+        return RedirectResponse(url="/dashboard", status_code=303)
+    login_page = DASHBOARD_DIR / "login.html"
+    if login_page.exists():
+        return HTMLResponse(
+            content=login_page.read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-store"},
+        )
+    return HTMLResponse(
+        content="<h1>Voice Cloner Management Console</h1><p>Login page unavailable.</p>",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/", response_class=RedirectResponse)

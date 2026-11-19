@@ -25,6 +25,7 @@ from VoiceClonerAppServer.core.security import (
     get_current_user,
     hash_password,
     oauth2_scheme,
+    resolve_client_ip,
     verify_google_id_token,
     verify_password,
 )
@@ -52,18 +53,6 @@ router = APIRouter(prefix="/v1/auth", tags=["Authentication"])
 def _effective_limit(account: Account, attr: str, default: int) -> int:
     value = getattr(account, attr, None)
     return value if value is not None else default
-
-
-def _resolve_client_ip(request: Request) -> str:
-    """Return the caller IP, honoring X-Forwarded-For only when trusted."""
-    security = settings_manager.get_settings().security
-    if security.trust_forwarded_for:
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            first_hop = forwarded_for.split(",")[0].strip()
-            if first_hop:
-                return first_hop
-    return request.client.host if request.client else "unknown"
 
 
 def build_user_response(user: Account, cloned_count: int = 0) -> UserResponse:
@@ -184,7 +173,7 @@ async def anonymous_auth(
 ):
     """Create or resume the anonymous install account and issue its tokens."""
     account, _created = await get_or_create_anonymous_user(
-        db, req.install_id, _resolve_client_ip(request)
+        db, req.install_id, resolve_client_ip(request)
     )
 
     access_token = create_access_token(account.id, account_type=ACCOUNT_TYPE_ANONYMOUS)

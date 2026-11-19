@@ -1,10 +1,17 @@
 from fastapi.testclient import TestClient
+from VoiceClonerAppServer.core.settings_manager import settings_manager
 from VoiceClonerAppServer.main import app
 
 client = TestClient(app)
 
 def test_dashboard_endpoint_serves_html():
-    res = client.get("/dashboard")
+    fresh = TestClient(app)
+    login = fresh.post(
+        "/v1/dashboard/session",
+        json={"key": settings_manager.get_effective_management_key()},
+    )
+    assert login.status_code == 200
+    res = fresh.get("/dashboard")
     assert res.status_code == 200
     assert "VOICE CLONER" in res.text or "Voice Cloner" in res.text
     assert "Chart.js" in res.text or "chart.js" in res.text.lower()
@@ -90,5 +97,28 @@ def test_dashboard_js_syntax_is_valid():
     assert res.returncode == 0, f"app.js syntax error:\n{res.stderr}"
 
 
+def test_dashboard_js_uses_cookie_session_only():
+    from pathlib import Path
+    js_path = Path("VoiceClonerAppServer/static/dashboard/app.js")
+    if not js_path.exists():
+        js_path = Path("static/dashboard/app.js")
+    js = js_path.read_text(encoding="utf-8")
+
+    assert "vc_admin_secret_key" not in js
+    assert "X-Management-Key" not in js
+    assert "credentials: 'same-origin'" in js
+    assert "X-Dashboard-Request" in js
+    assert "logoutDashboard" in js
+    assert "/dashboard/login" in js
 
 
+def test_no_hardcoded_management_key_in_static_files():
+    from pathlib import Path
+    root = Path("VoiceClonerAppServer/static")
+    if not root.exists():
+        root = Path("static")
+    assert root.is_dir()
+    for path in root.rglob("*"):
+        if path.is_file():
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            assert "vc_admin_secret_key_123" not in text, str(path)

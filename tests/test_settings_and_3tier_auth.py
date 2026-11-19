@@ -306,9 +306,10 @@ def test_exempt_endpoints_accessible_without_client_key():
     res_health = client.get("/health")
     assert res_health.status_code == 200
 
-    # 2. /dashboard is open to web browser
-    res_dash = client.get("/dashboard")
-    assert res_dash.status_code == 200
+    # 2. /dashboard redirects browsers to the login page without a session
+    res_dash = client.get("/dashboard", follow_redirects=False)
+    assert res_dash.status_code == 303
+    assert res_dash.headers["location"] == "/dashboard/login"
 
     # 3. /v1/management/* requires X-Management-Key, NOT X-API-Key
     m_key = settings_manager.get_settings().security.management_key

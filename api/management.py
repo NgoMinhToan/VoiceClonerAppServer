@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, desc, func, select
 
 from VoiceClonerAppServer.core.settings_manager import (
+    LEGACY_INSECURE_MANAGEMENT_KEY,
     AppSettings,
     ClientApiKeyConfig,
     ModelWorkerConfig,
@@ -75,20 +76,72 @@ class UpdateUserRequest(BaseModel):
     full_name: Optional[str] = Field(None, min_length=1, max_length=255)
 
 
-@router.get("/settings")
-async def get_settings() -> Dict[str, Any]:
-    """Retrieve active system configuration."""
-    settings = settings_manager.get_settings()
+def serialize_settings(settings: AppSettings) -> Dict[str, Any]:
+    """Serialize settings for API responses without leaking the management key."""
     data = settings.model_dump()
+    data["security"]["management_key"] = ""
+    data["management_key_configured"] = bool(settings.security.management_key)
+    data["management_key_source"] = settings_manager.management_key_source
     return data
 
 
+@router.get("/settings")
+async def get_settings() -> Dict[str, Any]:
+    """Retrieve active system configuration."""
+    return serialize_settings(settings_manager.get_settings())
+
+
 @router.put("/settings")
-async def update_settings(payload: UpdateSettingsRequest) -> Dict[str, Any]:
+async def update_settings(
+    payload: UpdateSettingsRequest,
+    principal: str = Depends(verify_management_key),
+) -> Dict[str, Any]:
     """Update system configuration in settings.json with immediate hot-reload."""
     updates = payload.model_dump(exclude_unset=True)
-    updated = settings_manager.update_settings(updates)
-    return updated.model_dump()
+    security_update = updates.get("security") or {}
+    requested_key = security_update.get("management_key")
+    if "management_key" in security_update:
+        if not isinstance(requested_key, str):
+            raise HTTPException(
+                status_code=422,
+                detail="management_key must be a string",
+            )
+        requested_key = requested_key.strip()
+        if requested_key == LEGACY_INSECURE_MANAGEMENT_KEY:
+            # The historical shipped default is public knowledge and is treated
+            # as unset on read, so rotating to it would silently lock the
+            # operator out. Reject it outright instead of returning a false 200.
+            raise HTTPException(
+                status_code=422,
+                detail="management_key must not be the historical default",
+            )
+        current_key = settings_manager.get_effective_management_key()
+        if not requested_key or requested_key == current_key:
+            # Blank or unchanged: never persist the effective management key.
+            security_update.pop("management_key", None)
+        elif settings_manager.management_key_source == "environment":
+            # The environment key must never be written to disk, even if the
+            # caller submits a value that happens to match it.
+            security_update.pop("management_key", None)
+            if principal == "dashboard-session":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Rotate the management key with X-Management-Key or the environment",
+                )
+            raise HTTPException(
+                status_code=409,
+                detail="Management key is managed by the environment",
+            )
+        elif principal == "dashboard-session":
+            raise HTTPException(
+                status_code=403,
+                detail="Rotate the management key with X-Management-Key or the environment",
+            )
+        else:
+            # Persist the trimmed value, so disk holds exactly what was compared.
+            security_update["management_key"] = requested_key
+    settings_manager.update_settings(updates)
+    return serialize_settings(settings_manager.get_settings())
 
 
 @router.get("/keys", response_model=List[ClientApiKeyConfig])

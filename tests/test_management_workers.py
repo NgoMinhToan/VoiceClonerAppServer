@@ -6,7 +6,7 @@ from VoiceClonerAppServer.core.settings_manager import settings_manager
 @pytest.mark.asyncio
 async def test_worker_management_api_crud():
     transport = ASGITransport(app=app)
-    headers = {"X-Management-Key": "vc_admin_secret_key_123"}
+    headers = {"X-Management-Key": settings_manager.get_effective_management_key()}
     test_worker_id = "test-worker-temp-1"
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -72,7 +72,7 @@ async def test_worker_list_exposes_routing_health():
     from VoiceClonerAppServer.services.model_dispatcher import model_dispatcher
 
     transport = ASGITransport(app=app)
-    headers = {"X-Management-Key": "vc_admin_secret_key_123"}
+    headers = {"X-Management-Key": settings_manager.get_effective_management_key()}
     worker_id = "test-worker-health-1"
     snapshot = {k: dict(v) for k, v in model_dispatcher._worker_stats.items()}
 
@@ -99,7 +99,7 @@ async def test_worker_list_exposes_routing_health():
 @pytest.mark.asyncio
 async def test_cache_purge_api():
     transport = ASGITransport(app=app)
-    headers = {"X-Management-Key": "vc_admin_secret_key_123"}
+    headers = {"X-Management-Key": settings_manager.get_effective_management_key()}
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         res = await ac.post("/v1/management/cache/purge", headers=headers)
@@ -112,7 +112,7 @@ async def test_cache_purge_api():
 @pytest.mark.asyncio
 async def test_worker_create_with_max_concurrent():
     transport = ASGITransport(app=app)
-    headers = {"X-Management-Key": "vc_admin_secret_key_123"}
+    headers = {"X-Management-Key": settings_manager.get_effective_management_key()}
     test_worker_id = "test-worker-concurrent-4"
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
